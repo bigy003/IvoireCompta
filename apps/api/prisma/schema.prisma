@@ -1,0 +1,503 @@
+// IvoireCompta — Schéma Prisma complet
+// Base de données PostgreSQL avec Row-Level Security (multi-tenant)
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "windows", "debian-openssl-3.0.x"]
+}
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// CABINET & UTILISATEURS
+// ─────────────────────────────────────────────
+
+model Cabinet {
+  id              String   @id @default(uuid())
+  nom             String
+  numeroOrdre     String   @unique // N° ONECCA-CI
+  rccm            String?
+  ncc             String?  // N° Contribuable CI
+  adresse         String?
+  telephone       String?
+  email           String
+  regimeFiscal    RegimeFiscal @default(REEL_NORMAL)
+  planComptable   String   @default("SYSCOHADA_CI_2018")
+  actif           Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  utilisateurs    Utilisateur[]
+  clients         Client[]
+  parametres      ParametreCabinet?
+
+  @@map("cabinets")
+}
+
+model Utilisateur {
+  id              String   @id @default(uuid())
+  cabinetId       String
+  cabinet         Cabinet  @relation(fields: [cabinetId], references: [id], onDelete: Cascade)
+  nom             String
+  prenom          String
+  email           String
+  passwordHash    String
+  role            RoleUtilisateur @default(COLLABORATEUR)
+  numeroOrdre     String?  // Requis si EXPERT_COMPTABLE
+  totpSecret      String?  // 2FA pour visa électronique
+  totpActif       Boolean  @default(false)
+  actif           Boolean  @default(true)
+  dernierAcces    DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  ecrituresSaisies     Ecriture[]
+  missionsAssignees    Mission[]
+  visasDsf             DeclarationFiscale[] @relation("VisaExpert")
+
+  @@unique([cabinetId, email])
+  @@map("utilisateurs")
+}
+
+model ParametreCabinet {
+  id                    String   @id @default(uuid())
+  cabinetId             String   @unique
+  cabinet               Cabinet  @relation(fields: [cabinetId], references: [id])
+  tauxHoraireDefaut     Decimal  @default(5000)  @db.Decimal(10,2)
+  deviseDefaut          String   @default("XOF")
+  alerteJ30             Boolean  @default(true)
+  alerteJ15             Boolean  @default(true)
+  alerteJ7              Boolean  @default(true)
+  emailAlertes          String?
+  whatsappAlertes       String?
+
+  @@map("parametres_cabinet")
+}
+
+// ─────────────────────────────────────────────
+// CLIENTS & DOSSIERS
+// ─────────────────────────────────────────────
+
+model Client {
+  id                String   @id @default(uuid())
+  cabinetId         String
+  cabinet           Cabinet  @relation(fields: [cabinetId], references: [id], onDelete: Cascade)
+  rccm              String?
+  ncc               String   // N° Contribuable Cote d'Ivoire
+  nomRaisonSociale  String
+  formeJuridique    FormeJuridique @default(SARL)
+  secteurActivite   String?
+  naeCode           String?  // Code Nature Activité Économique DGI-CI
+  regimeImposition  RegimeFiscal @default(REEL_NORMAL)
+  assujettitTVA     Boolean  @default(true)
+  tauxTVA           Decimal  @default(18) @db.Decimal(5,2)
+  dateCreation      DateTime?
+  adresseSiege      String?
+  telephone         String?
+  email             String?
+  actif             Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  dossiers          Dossier[]
+  employes          Employe[]
+
+  @@unique([cabinetId, ncc])
+  @@map("clients")
+}
+
+model Dossier {
+  id              String   @id @default(uuid())
+  clientId        String
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  gestionnaireId  String?
+  typeMission     TypeMission @default(COMPTABILITE)
+  statut          StatutDossier @default(EN_COURS)
+  dateOuverture   DateTime @default(now())
+  dateFermeture   DateTime?
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  exercices       Exercice[]
+  documents       Document[]
+  missions        Mission[]
+
+  @@map("dossiers")
+}
+
+model Exercice {
+  id          String   @id @default(uuid())
+  dossierId   String
+  dossier     Dossier  @relation(fields: [dossierId], references: [id], onDelete: Cascade)
+  annee       Int
+  dateDebut   DateTime
+  dateFin     DateTime
+  statut      StatutExercice @default(OUVERT)
+  cloture     Boolean  @default(false)
+  dateCloture DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  ecritures           Ecriture[]
+  declarationsFiscales DeclarationFiscale[]
+  journaux            Journal[]
+
+  @@unique([dossierId, annee])
+  @@map("exercices")
+}
+
+// ─────────────────────────────────────────────
+// COMPTABILITÉ — ÉCRITURES
+// ─────────────────────────────────────────────
+
+model Journal {
+  id          String   @id @default(uuid())
+  exerciceId  String
+  exercice    Exercice @relation(fields: [exerciceId], references: [id], onDelete: Cascade)
+  code        String   // AC, VT, BQ, CA, OD, SA, AN
+  libelle     String
+  type        TypeJournal
+  cloture     Boolean  @default(false)
+  periodeClot String?  // "2024-03" si clôturé pour mars
+  createdAt   DateTime @default(now())
+
+  ecritures   Ecriture[]
+
+  @@unique([exerciceId, code])
+  @@map("journaux")
+}
+
+model Ecriture {
+  id              String   @id @default(uuid())
+  exerciceId      String
+  exercice        Exercice @relation(fields: [exerciceId], references: [id], onDelete: Cascade)
+  journalId       String
+  journal         Journal  @relation(fields: [journalId], references: [id])
+  saisiParId      String
+  saisiPar        Utilisateur @relation(fields: [saisiParId], references: [id])
+  dateOperation   DateTime
+  libelle         String
+  pieceRef        String?  // N° facture, reçu, etc.
+  statut          StatutEcriture @default(BROUILLON)
+  valideeLe       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  lignes          LigneEcriture[]
+
+  @@map("ecritures")
+}
+
+model LigneEcriture {
+  id              String   @id @default(uuid())
+  ecritureId      String
+  ecriture        Ecriture @relation(fields: [ecritureId], references: [id], onDelete: Cascade)
+  compteSyscohada String   // Ex: "601100", "401100"
+  libelleCompte   String
+  debit           Decimal  @default(0) @db.Decimal(18,0) // FCFA = entier
+  credit          Decimal  @default(0) @db.Decimal(18,0)
+  lettrage        String?  // Code lettrage ex: "A001"
+  contrepartie    String?  // Compte contrepartie pour rapprochement
+  ordre           Int      @default(0)
+
+  @@map("lignes_ecriture")
+}
+
+// ─────────────────────────────────────────────
+// DÉCLARATIONS FISCALES & DSF
+// ─────────────────────────────────────────────
+
+model DeclarationFiscale {
+  id                String   @id @default(uuid())
+  exerciceId        String
+  exercice          Exercice @relation(fields: [exerciceId], references: [id], onDelete: Cascade)
+  viseeParId        String?
+  viseePar          Utilisateur? @relation("VisaExpert", fields: [viseeParId], references: [id])
+  typeDeclaration   TypeDeclaration
+  periodeMois       Int?     // 1-12 pour TVA mensuelle
+  periodeAnnee      Int
+  dateEcheance      DateTime
+  dateDepot         DateTime?
+  statut            StatutDeclaration @default(A_PREPARER)
+  montantDu         Decimal? @db.Decimal(18,0)
+  montantPaye       Decimal? @db.Decimal(18,0)
+  referenceEimpots  String?  // Retourné par e-impôts.gouv.ci
+  dateVisa          DateTime?
+  hashDocuments     String?  // Hash SHA256 des états financiers visés
+  penalite          Decimal? @db.Decimal(18,0)
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tableauxDsf       TableauDsf[]
+
+  @@map("declarations_fiscales")
+}
+
+model TableauDsf {
+  id              String   @id @default(uuid())
+  declarationId   String
+  declaration     DeclarationFiscale @relation(fields: [declarationId], references: [id], onDelete: Cascade)
+  codeTableau     String   // T01 à T09
+  libelleTableau  String
+  donnees         Json     // Structure JSON flexible selon le tableau
+  valide          Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([declarationId, codeTableau])
+  @@map("tableaux_dsf")
+}
+
+// ─────────────────────────────────────────────
+// PAIE & CNPS
+// ─────────────────────────────────────────────
+
+model Employe {
+  id              String   @id @default(uuid())
+  clientId        String
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  matricule       String
+  nom             String
+  prenom          String
+  dateNaissance   DateTime?
+  dateEmbauche    DateTime
+  categorieCnps   String   // Catégorie socioprofessionnelle
+  codeCategorie   String   // Code CNPS
+  salaireBase     Decimal  @db.Decimal(18,0)
+  primes          Json     @default("{}")  // {transport: 30000, logement: 50000}
+  avantages       Json     @default("{}")
+  actif           Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  bulletins       BulletinPaie[]
+
+  @@unique([clientId, matricule])
+  @@map("employes")
+}
+
+model BulletinPaie {
+  id                  String   @id @default(uuid())
+  employeId           String
+  employe             Employe  @relation(fields: [employeId], references: [id], onDelete: Cascade)
+  mois                Int      // 1-12
+  annee               Int
+  salaireBrut         Decimal  @db.Decimal(18,0)
+  // Cotisations employeur
+  cotisationCnpsAt    Decimal  @db.Decimal(18,0) // Accident travail
+  cotisationCnpsPf    Decimal  @db.Decimal(18,0) // Prestations familiales
+  cotisationCnpsRe    Decimal  @db.Decimal(18,0) // Retraite employeur
+  cotisationFdfp      Decimal  @db.Decimal(18,0) // Formation prof.
+  // Cotisations salarié
+  cotisationCnpsSal   Decimal  @db.Decimal(18,0) // Retraite salarié 3.2%
+  impotIts            Decimal  @db.Decimal(18,0) // ITS barème progressif
+  netAPayer           Decimal  @db.Decimal(18,0)
+  // Détail calcul ITS
+  salaireNetFiscal    Decimal  @db.Decimal(18,0) // Après abattement 15%
+  abattementEnfants   Decimal  @default(0) @db.Decimal(18,0)
+  nombreEnfants       Int      @default(0)
+  genere              Boolean  @default(false)
+  createdAt           DateTime @default(now())
+
+  @@unique([employeId, mois, annee])
+  @@map("bulletins_paie")
+}
+
+// ─────────────────────────────────────────────
+// GESTION CABINET
+// ─────────────────────────────────────────────
+
+model Mission {
+  id              String   @id @default(uuid())
+  dossierId       String
+  dossier         Dossier  @relation(fields: [dossierId], references: [id], onDelete: Cascade)
+  utilisateurId   String
+  utilisateur     Utilisateur @relation(fields: [utilisateurId], references: [id])
+  libelle         String
+  dateDebut       DateTime
+  dateFin         DateTime?
+  heuresPrevues   Decimal  @default(0) @db.Decimal(8,2)
+  heuresRealisees Decimal  @default(0) @db.Decimal(8,2)
+  tauxHoraire     Decimal  @db.Decimal(10,2)
+  statut          StatutMission @default(EN_COURS)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("missions")
+}
+
+model Document {
+  id            String   @id @default(uuid())
+  dossierId     String
+  dossier       Dossier  @relation(fields: [dossierId], references: [id], onDelete: Cascade)
+  nomFichier    String
+  typeDocument  TypeDocument
+  urlStockage   String   // S3 presigned path
+  tailleFichier Int?     // bytes
+  uploadeLe     DateTime @default(now())
+  uploadeParId  String?
+  hashSha256    String?  // Intégrité
+
+  @@map("documents")
+}
+
+model EcheanceFiscale {
+  id              String   @id @default(uuid())
+  clientId        String
+  typeDeclaration TypeDeclaration
+  periodeLabel    String   // "TVA-2025-03", "DSF-2024"
+  dateEcheance    DateTime
+  statut          StatutEcheance @default(A_FAIRE)
+  alerteJ30       Boolean  @default(false)
+  alerteJ15       Boolean  @default(false)
+  alerteJ7        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  @@map("echeances_fiscales")
+}
+
+// ─────────────────────────────────────────────
+// AUDIT LOG (immuable)
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  cabinetId   String
+  userId      String?
+  action      String   // "ECRITURE_VALIDEE", "DSF_VISEE", etc.
+  entite      String   // Nom de la table
+  entiteId    String
+  donneeAvant Json?
+  donneeApres Json?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  @@index([cabinetId, createdAt])
+  @@index([entite, entiteId])
+  @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum RoleUtilisateur {
+  EXPERT_COMPTABLE
+  COLLABORATEUR
+  STAGIAIRE
+  CLIENT_VIEWER
+  ADMIN_CABINET
+}
+
+enum RegimeFiscal {
+  REEL_NORMAL         // CA > 200M FCFA
+  REEL_SIMPLIFIE      // CA 50M-200M FCFA
+  BIC_SIMPLIFIE       // Petites entreprises
+  BNC                 // Professions libérales
+  ZONE_FRANCHE_ZICI   // Zone Industrielle CI
+}
+
+enum FormeJuridique {
+  SA
+  SARL
+  SAS
+  SNC
+  EI              // Entreprise individuelle
+  GIE
+  ASSOCIATION
+  ONG
+  AUTRE
+}
+
+enum TypeJournal {
+  ACHATS
+  VENTES
+  BANQUE
+  CAISSE
+  OPERATIONS_DIVERSES
+  SALAIRES
+  A_NOUVEAU
+  EXTOURNE
+}
+
+enum StatutEcriture {
+  BROUILLON
+  VALIDEE
+  EXTOURNEE
+}
+
+enum StatutExercice {
+  OUVERT
+  EN_CLOTURE
+  CLOTURE
+}
+
+enum StatutDossier {
+  EN_COURS
+  SUSPENDU
+  CLOTURE
+  ARCHIVE
+}
+
+enum TypeMission {
+  COMPTABILITE
+  AUDIT
+  CONSEIL_FISCAL
+  EXPERTISE_JUDICIAIRE
+  PAIE
+  CREATION_ENTREPRISE
+}
+
+enum TypeDeclaration {
+  TVA_MENSUELLE
+  IS_ACOMPTE_1
+  IS_ACOMPTE_2
+  IS_ACOMPTE_3
+  IS_SOLDE
+  IMF
+  DSF_ANNUELLE
+  CNPS_MENSUELLE
+  ITS_MENSUEL
+  PATENTE
+  DECLARATION_EMPLOI
+}
+
+enum StatutDeclaration {
+  A_PREPARER
+  EN_PREPARATION
+  PRETE
+  VISEE
+  DEPOSEE
+  ACCEPTEE
+  REJETEE
+  CONTENTIEUX
+}
+
+enum StatutEcheance {
+  A_FAIRE
+  EN_COURS
+  FAITE
+  EN_RETARD
+  PENALISEE
+}
+
+enum StatutMission {
+  EN_COURS
+  TERMINEE
+  FACTUREE
+  ARCHIVEE
+}
+
+enum TypeDocument {
+  PIECE_COMPTABLE
+  RELEVE_BANCAIRE
+  DECLARATION_FISCALE
+  BILAN
+  CONTRAT
+  RAPPORT_AUDIT
+  AUTRE
+}

@@ -1,0 +1,38 @@
+{
+  "name": "@ivoirecompta/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.0",
+    "@fastify/jwt": "^8.0.0",
+    "@fastify/rate-limit": "^9.0.0",
+    "@fastify/swagger": "^8.14.0",
+    "@prisma/client": "^5.12.0",
+    "@ivoirecompta/fiscal-engine": "*",
+    "fastify": "^4.27.0",
+    "bullmq": "^5.7.0",
+    "ioredis": "^5.3.0",
+    "zod": "^3.22.0",
+    "bcryptjs": "^2.4.3",
+    "otplib": "^12.0.1",
+    "nodemailer": "^6.9.0",
+    "pino": "^9.0.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.12.0",
+    "tsx": "^4.7.0",
+    "vitest": "^1.5.0",
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/nodemailer": "^6.4.14"
+  }
+}
