@@ -1,0 +1,34 @@
+import axios from "axios"
+import Cookies from "js-cookie"
+
+export const api = axios.create({
+  baseURL: process.env.NEXT_PUBLIC_API_URL,
+  headers: { "Content-Type": "application/json" },
+})
+
+api.interceptors.request.use(config => {
+  const token = Cookies.get("token")
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+api.interceptors.response.use(
+  res => res,
+  err => {
+    if (err.response?.status === 401) {
+      Cookies.remove("token")
+      window.location.href = "/login"
+    }
+    return Promise.reject(err)
+  }
+)
+
+export const login      = (email: string, password: string) => api.post("/auth/login", { email, password })
+export const getClients = () => api.get("/clients")
+export const getClient  = (id: string) => api.get(`/clients/${id}`)
+export const getDashboard = () => api.get("/dashboard")
+export const getEcheances = () => api.get("/declarations/echeances")
+export const getEcritures = (params: Record<string, string>) => api.get("/ecritures", { params })
+export const getBalance   = (exerciceId: string) => api.get("/ecritures/balance", { params: { exerciceId } })
+export const creerEcriture = (data: unknown) => api.post("/ecritures", data)
+export const genererDSF   = (exerciceId: string) => api.post("/declarations/dsf/generer", { exerciceId })
