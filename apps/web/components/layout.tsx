@@ -44,9 +44,6 @@ export default function Layout({ children }: Props) {
         backgroundAttachment: "fixed",
       }}
     >
-      {/* Barre orange en haut */}
-      <div className="h-1.5 w-full bg-gradient-to-r from-orange-400 via-orange-500 to-orange-400"></div>
-
       {/* Header flottant */}
       <div className="px-8 py-4">
         <div className="max-w-7xl mx-auto">
