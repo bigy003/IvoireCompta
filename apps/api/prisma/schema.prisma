@@ -17,9 +17,10 @@ datasource db {
 model Cabinet {
   id              String   @id @default(uuid())
   nom             String
-  numeroOrdre     String   @unique // N° ONECCA-CI
-  rccm            String?
+  numeroOrdre     String   @unique // N° ONECCA-CI (référence légale cabinet / expert principal)
+  rccm            String?  // Registre du commerce CI (ex. CI-ABJ-2024-XXX)
   ncc             String?  // N° Contribuable CI
+  secteurActivite String?  // Secteur métier du cabinet (optionnel, stats / conformité interne)
   adresse         String?
   telephone       String?
   email           String
@@ -45,7 +46,8 @@ model Utilisateur {
   email           String
   passwordHash    String
   role            RoleUtilisateur @default(COLLABORATEUR)
-  numeroOrdre     String?  // Requis si EXPERT_COMPTABLE
+  numeroOrdre     String?  // N° ONECCA personnel (visa DSF)
+  specialisation  String?  // Domaine de pratique affiché / CRM
   totpSecret      String?  // 2FA pour visa électronique
   totpActif       Boolean  @default(false)
   actif           Boolean  @default(true)

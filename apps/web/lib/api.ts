@@ -23,7 +23,27 @@ api.interceptors.response.use(
   }
 )
 
-export const login      = (email: string, password: string) => api.post("/auth/login", { email, password })
+export const login = (email: string, password: string) => api.post("/auth/login", { email, password })
+
+export type RegisterPayload = {
+  cabinetNom: string
+  numeroOrdre: string
+  cabinetEmail: string
+  cabinetTelephone?: string
+  rccm?: string
+  adresse?: string
+  secteurActivite?: string
+  prenom: string
+  nom: string
+  email: string
+  password: string
+  expertNumeroOrdre?: string
+  specialisation?: string
+  ncc?: string
+  gestionFacturation?: boolean
+}
+
+export const register = (data: RegisterPayload) => api.post("/auth/register", data)
 export const getClients = () => api.get("/clients")
 export const getClient  = (id: string) => api.get(`/clients/${id}`)
 export const getDashboard = () => api.get("/dashboard")

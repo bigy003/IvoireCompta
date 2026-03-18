@@ -39,7 +39,7 @@ await app.register(rateLimit, {
 })
 
 app.addHook("onRequest", async (request, reply) => {
-  const publicRoutes = ["/auth/login", "/auth/refresh", "/health"]
+  const publicRoutes = ["/auth/login", "/auth/register", "/auth/refresh", "/health"]
   if (publicRoutes.some(r => request.url.startsWith(r))) return
   try {
     await request.jwtVerify()

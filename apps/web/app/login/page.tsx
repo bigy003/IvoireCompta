@@ -1,17 +1,36 @@
 "use client"
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { Suspense, useEffect, useState } from "react"
+import Link from "next/link"
+import { useRouter, useSearchParams } from "next/navigation"
 import Cookies from "js-cookie"
 import { login } from "@/lib/api"
+import { AuthFloatingHeader } from "@/components/auth-floating-header"
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
+  const [registeredOk, setRegisteredOk] = useState(false)
+
+  useEffect(() => {
+    const registered = searchParams.get("registered")
+    const emailParam = searchParams.get("email")
+    if (emailParam) {
+      try {
+        setEmail(decodeURIComponent(emailParam))
+      } catch {
+        setEmail(emailParam)
+      }
+    }
+    if (registered === "1") {
+      setRegisteredOk(true)
+    }
+  }, [searchParams])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -39,25 +58,9 @@ export default function LoginPage() {
         backgroundRepeat: "no-repeat",
       }}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-8 py-4">
-        <div className="bg-white rounded-xl px-3 py-1.5 shadow-sm flex items-center gap-2 border-2 border-orange-400">
-          <img src="/images/logo.png" alt="Logo" className="h-8 w-8 object-contain" />
-          <span className="font-bold text-gray-900 text-base">
-            Ivoire<span className="text-orange-500">Compta</span>
-          </span>
-        </div>
-        <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-1.5 shadow-sm border-2 border-orange-400 cursor-pointer">
-          <span className="text-base">🇨🇮</span>
-          <span className="text-sm font-medium text-gray-700">FR</span>
-          <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </div>
-      </div>
+      <AuthFloatingHeader logoHref="/" />
 
-      {/* Formulaire centré */}
-      <div className="flex-1 flex items-center justify-center px-4">
+      <div className="flex flex-1 flex-col items-center justify-center px-4 pt-24 pb-8">
         <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-8">
           <div className="text-center mb-8">
             <h1 className="text-2xl font-bold text-gray-900 mb-2">
@@ -67,6 +70,15 @@ export default function LoginPage() {
               Bienvenue, veuillez vous connecter à votre compte
             </p>
           </div>
+
+          {registeredOk && (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl px-4 py-3 mb-5 text-sm">
+              <p className="font-semibold">Compte créé avec succès</p>
+              <p className="mt-1 text-emerald-700">
+                Vous pouvez vous connecter — saisissez votre mot de passe ci-dessous.
+              </p>
+            </div>
+          )}
 
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 mb-5 text-sm">
@@ -91,6 +103,7 @@ export default function LoginPage() {
                   onChange={e => setEmail(e.target.value)}
                   placeholder="exemple@mail.com"
                   required
+                  autoComplete="email"
                   className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
                 />
               </div>
@@ -112,6 +125,7 @@ export default function LoginPage() {
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••"
                   required
+                  autoComplete="current-password"
                   className="w-full pl-10 pr-20 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
                 />
                 <button
@@ -140,20 +154,36 @@ export default function LoginPage() {
 
             <p className="text-center text-sm text-gray-500">
               Pas encore de compte ?{" "}
-              <span className="text-orange-500 hover:text-orange-600 font-medium cursor-pointer">
+              <Link
+                href="/inscription"
+                className="text-orange-500 hover:text-orange-600 font-medium"
+              >
                 Inscrivez-vous
-              </span>
+              </Link>
             </p>
           </form>
         </div>
       </div>
 
-      {/* Footer */}
       <div className="text-center py-4 text-xs text-gray-400">
         © 2024 IvoireCompta. Tous droits réservés. |{" "}
         <span className="hover:text-gray-600 cursor-pointer">Sécurité</span> |{" "}
         <span className="hover:text-gray-600 cursor-pointer">Vie Privée.</span>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen w-full flex items-center justify-center bg-gray-50 text-gray-600 text-sm">
+          Chargement…
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   )
 }

@@ -1,0 +1,323 @@
+IvoireCompta — Cahier des Charges Technique   Version 1.0 — Confidentiel
+
+
+
+
+                           IvoireCompta
+                      Cahier des Charges Technique
+           Logiciel SaaS de gestion comptable pour experts-comptables CI
+
+
+ Informations
+ Produit                          IvoireCompta
+ Version                          1.0 — MVP Phase 1
+ Date                             16/03/2026
+ Statut                           Confidentiel
+ Stack                            Next.js 14 · Node.js Fastify · PostgreSQL · AWS Lagos
+IvoireCompta — Cahier des Charges Technique   Version 1.0 — Confidentiel
+
+
+
+1. Contexte et objectifs
+1.1 Présentation du projet
+IvoireCompta est un logiciel SaaS de gestion comptable et fiscale destiné exclusivement aux
+cabinets d'expertise comptable en Côte d'Ivoire. Il se différencie des solutions génériques (EBP,
+Sage) par une conformité native aux réglementations ivoiriennes : SYSCOHADA révisé 2018, 9
+tableaux additionnels DGI-CI, intégration e-impôts.gouv.ci, et gestion de la paie selon les règles
+CNPS/ITS locales.
+
+1.2 Problèmes résolus
+    •   Aucun logiciel du marché ne gère les 9 tableaux additionnels obligatoires DGI-CI (T01 à
+        T09) depuis 2023
+    •   Le visa électronique ONECCA-CI sur e-impôts.gouv.ci est un processus manuel de 3 à 5h
+        par dossier
+    •   La réforme DGI 2026 rend obligatoire la digitalisation des états financiers — aucun outil
+        local n'est prêt
+    •   Les coupures de réseau à Abidjan imposent un fonctionnement offline-first que les
+        solutions cloud standard ne supportent pas
+    •   Le calendrier fiscal est géré sur Excel dans la plupart des cabinets, source d'erreurs et de
+        pénalités
+
+
+
+1.3 Périmètre du MVP (Phase 1 — Mois 1 à 3)
+Le MVP cible les fonctionnalités strictement nécessaires pour que 2 à 3 cabinets pilotes puissent
+utiliser IvoireCompta pour leur clôture DSF d'avril 2026.
+
+ Module                                             Inclus MVP         Phase 2
+ Authentification multi-tenant                      ✓
+ Plan comptable SYSCOHADA CI                        ✓
+ Saisie écritures + validation temps réel           ✓
+ Grand livre & balance des comptes                  ✓
+ États financiers (Bilan, CR, TFT)                  ✓
+ 9 tableaux additionnels DGI-CI (T01–T09)           ✓
+ Calcul IS / IMF automatique                        ✓
+ Calendrier fiscal + alertes email                  ✓
+ Intégration e-impôts + visa ONECCA                                    ✓
+ Module paie CNPS complet                                              ✓
+ PWA offline-first mobile                                              ✓
+ Portail client sécurisé                                               ✓
+IvoireCompta — Cahier des Charges Technique   Version 1.0 — Confidentiel
+
+
+
+2. Architecture technique
+2.1 Stack technologique
+ Couche                      Technologie                   Justification
+ Frontend                    Next.js 14, TypeScript,       SSR + PWA offline-first
+                             Tailwind
+ Backend                     Node.js, Fastify,             Performance, typage
+                             TypeScript                    strict
+ ORM                         Prisma 5                      Migrations, type-safety
+ Base données                PostgreSQL 16                 RLS multi-tenant natif
+ Cache / Jobs                Redis + BullMQ                Files alertes, jobs async
+ Infrastructure              AWS Lagos af-south-1          Latence < 30ms depuis
+                                                           Abidjan
+ Auth                        JWT + 2FA TOTP                Visa expert-comptable
+                                                           sécurisé
+ Stockage docs               AWS S3                        Pièces comptables, DSF
+                                                           signées
+ Paiements                   CinetPay, Orange              Mobile Money CI
+                             Money, Wave                   nativement
+ Notifications               SendGrid + WhatsApp           Alertes deadlines
+                             Business                      multicanal
+
+
+2.2 Multi-tenant et isolation des données
+Chaque cabinet est un tenant isolé. L'isolation est assurée à deux niveaux :
+    •   Application : toutes les requêtes Prisma filtrent sur cabinetId — aucune donnée d'un
+        cabinet n'est accessible depuis un autre
+    •   Base de données : Row-Level Security (RLS) PostgreSQL activé sur toutes les tables
+        sensibles, avec une policy basée sur le JWT
+    •   Audit log immuable : toutes les actions critiques (écritures, visa DSF) sont journalisées
+        dans la table audit_logs sans possibilité de suppression
+
+2.3 Offline-first (PWA)
+Le frontend fonctionne sans connexion grâce à :
+    •   IndexedDB pour la persistance locale des écritures en cours de saisie
+    •   Service Worker pour le cache des assets et des données récentes
+    •   Synchronisation automatique dès rétablissement de la connexion avec résolution de
+        conflits (last-write-wins sur les brouillons, validation bloquée si conflit sur une écriture
+        validée)
+IvoireCompta — Cahier des Charges Technique   Version 1.0 — Confidentiel
+
+
+
+3. Modèle de données
+3.1 Entités principales
+ Entité               Description      Champs clés
+ Cabinet              Tenant           id, nom, numeroOrdre (ONECCA), regimeFiscal
+                      principal
+                      (cabinet
+                      expert-
+                      comptable)
+ Utilisateur          Membre du        role
+                      cabinet avec     (EXPERT_COMPTABLE/COLLABORATEUR/STAGIAIRE),
+                      rôle             totpSecret
+ Client               Entreprise       ncc (N° contribuable CI), regimeImposition, assujettitTVA
+                      cliente du
+                      cabinet
+ Dossier              Mission pour     typeMission, statut, gestionnaireId
+                      un client
+ Exercice             Exercice         annee, dateDebut, dateFin, cloture
+                      comptable
+                      annuel
+ Ecriture             En-tête          journalId, dateOperation, pieceRef, statut
+                      d'écriture
+                      SYSCOHADA
+ LigneEcriture        Ligne            compteSyscohada, debit, credit (bigint FCFA)
+                      débit/crédit
+ DeclarationFiscale   TVA, IS,         typeDeclaration, dateEcheance, referenceEimpots,
+                      DSF...           hashDocuments
+ TableauDsf           Un des 9         codeTableau (T01-T09), donnees (JSON flexible)
+                      tableaux DGI-
+                      CI
+ BulletinPaie         Bulletin         salaireBrut, cnps*, impotIts, netAPayer (tous bigint)
+                      mensuel
+                      salarié
+ EcheanceFiscale      Deadlines        dateEcheance, urgence, alerteJ30/J15/J7
+                      auto-
+                      générées
+ AuditLog             Journal          action, entite, donneeAvant, donneeApres
+                      immuable
+
+
+3.2 Précisions sur les types de données
+Toutes les valeurs monétaires sont stockées en bigint (entier FCFA). Il n'y a pas de centimes en
+FCFA. L'utilisation de bigint évite les erreurs d'arrondi des flottants JavaScript pour les calculs
+fiscaux.
+Le champ donnees des tableaux DSF est de type JSON (PostgreSQL jsonb). Chaque tableau
+(T01 à T09) ayant une structure radicalement différente, le JSON flexible est préférable à 9 tables
+rigides. Le codeTableau identifie la structure attendue.
+IvoireCompta — Cahier des Charges Technique   Version 1.0 — Confidentiel
+
+
+
+4. Règles métier et calculs fiscaux
+4.1 Règles SYSCOHADA — BLOQUANTES
+ Règle                     Contrôle                           Code erreur
+ Équilibre débit/crédit    SUM(debit) = SUM(credit)           ERR_DESEQUILIBRE
+                           par écriture
+ Minimum 2 lignes par      COUNT(lignes) >= 2                 ERR_MIN_LIGNES
+ écriture
+ Compte SYSCOHADA          Compte dans le plan                ERR_COMPTE_INVALIDE
+ valide                    comptable CI 2018
+ Pas de débit ET crédit    debit = 0 OU credit = 0 (pas       ERR_LIGNE_DOUBLE
+ sur 1 ligne               les deux > 0)
+ Journal non clôturé       journal.cloture = false pour la    ERR_JOURNAL_CLOTURE
+                           période
+ Exercice non clôturé      exercice.cloture = false           ERR_EXERCICE_CLOTURE
+
+
+4.2 Calcul IS et IMF
+Règle fondamentale CI : l'impôt dû est toujours le maximum entre l'IS calculé et l'IMF, même en
+cas de déficit.
+
+ Paramètre                         Valeur                         Source
+ Taux IS standard                  25%                            CGI CI Art. 27
+ Taux IS PME (CA < 200M)           20%                            CGI CI Art. 27 bis
+ Taux IMF                          0,5% du CA HT                  CGI CI Art. 45
+ Plancher IMF                      3 000 000 FCFA                 CGI CI Art. 45
+ Formule impôt dû                  MAX(IS, IMF)                   CGI CI Art. 45
+ Acomptes IS                       3 × IS(N-1)/3                  Échéances : 20/04, 20/07,
+                                                                  20/10
+ Solde IS                          30 avril N+1                   CGI CI
+
+
+4.3 Barème ITS mensuel
+ Tranche (FCFA/mois)               Taux                      Abattements
+ 0 – 75 000                        0%                        Frais pro : 15% du brut
+ 75 001 – 240 000                  16%                       Par enfant : 500 FCFA/mois (max 6)
+ 240 001 – 800 000                 21%                       Plafond CNPS : 1 647 315 FCFA
+ > 800 000                         24%
+
+
+4.4 Contrôles cohérence DSF avant dépôt
+    •    BLOQUANT : Bilan équilibré (Actif = Passif)
+    •    BLOQUANT : Résultat bilan = résultat compte de résultat
+    •    BLOQUANT : Flux de trésorerie cohérent avec variation trésorerie bilan
+IvoireCompta — Cahier des Charges Technique   Version 1.0 — Confidentiel
+
+
+
+    •   BLOQUANT : T07 et T08 cohérents (même base imposable)
+    •   BLOQUANT : Aucun compte de virement (58x) non soldé en fin d'exercice
+    •   AVERTISSEMENT : Mode IMF (entreprise déficitaire)
+    •   AVERTISSEMENT : Fournisseurs non lettrés depuis > 90 jours
+IvoireCompta — Cahier des Charges Technique   Version 1.0 — Confidentiel
+
+
+
+5. Spécification API
+5.1 Conventions
+    •   Base URL : https://api.ivoirecompta.ci/v1
+    •   Auth : Bearer JWT dans l'en-tête Authorization
+    •   Format : JSON — Content-Type: application/json
+    •   Erreurs : { error: string } avec code HTTP approprié
+    •   Pagination : ?page=N&perPage=50 (défaut)
+    •   Valeurs monétaires : string représentant un bigint (ex: "3000000")
+
+5.2 Endpoints principaux
+ Méthode     Endpoint                         Description                  Auth
+ POST        /auth/login                      Connexion JWT                Public
+ POST        /auth/visa/verifier              Vérifier TOTP pour visa      JWT
+                                              DSF
+ GET         /dashboard                       KPIs + échéances cabinet     JWT
+ GET         /clients                         Liste clients du cabinet     JWT
+ POST        /clients                         Créer un client              JWT
+ GET         /ecritures?exerciceId=           Liste écritures filtrées     JWT
+ POST        /ecritures                       Créer et valider une         JWT
+                                              écriture
+ GET         /ecritures/balance               Balance des comptes          JWT
+ POST        /declarations/dsf/generer        Générer 9 tableaux DGI-CI    JWT
+ POST        /declarations/:id/viser          Visa expert-comptable        JWT+TOTP
+                                              ONECCA
+ GET         /declarations/echeances          Échéances fiscales           JWT
+                                              imminentes
+ POST        /paie/bulletins/generer          Calculer bulletin CNPS+ITS   JWT
+ POST        /paie/recap-cnps                 Récap CNPS mensuel           JWT
+                                              client
+IvoireCompta — Cahier des Charges Technique   Version 1.0 — Confidentiel
+
+
+
+6. Sécurité et conformité
+6.1 Authentification
+    •   JWT avec expiration 8h + refresh token 30 jours
+    •   2FA TOTP obligatoire pour les actions visa DSF (OTP lib conforme RFC 6238)
+    •   Token de visa à durée limitée 15 minutes — usage unique par DSF
+    •   Vérification du numéro d'ordre ONECCA-CI en temps réel avant tout visa
+
+6.2 Chiffrement et protection des données
+    •   TLS 1.3 sur toutes les communications
+    •   Chiffrement AES-256 des données sensibles en base (totpSecret, informations bancaires)
+    •   Documents stockés sur S3 avec URL pré-signées à durée limitée (1h)
+    •   Hash SHA-256 des tableaux DSF visés pour garantie d'intégrité
+
+6.3 Audit et traçabilité
+    •   Toutes les actions critiques sont journalisées dans audit_logs (immuable — pas de
+        DELETE ni UPDATE)
+    •   Données avant/après pour toutes les modifications de valeurs comptables
+    •   IP address enregistrée pour les actions de visa
+    •   Retention des logs : 10 ans (obligation légale comptable CI)
+IvoireCompta — Cahier des Charges Technique   Version 1.0 — Confidentiel
+
+
+
+7. Roadmap et livrables
+Phase 1 — MVP (Mois 1–3)
+ Sprint                  Durée           Livrables
+ S1 — Fondations         2 semaines      Auth JWT + multi-tenant, schéma DB, CI/CD GitHub Actions
+ S2 — Comptabilité       2 semaines      Plan comptable CI, saisie écritures, validateurs SYSCOHADA
+ S3 — États              2 semaines      Bilan, CR, TFT auto-générés depuis les écritures
+ financiers
+ S4 — 9 tableaux         3 semaines      T01–T09 DGI-CI, calcul IS/IMF, contrôles cohérence DSF
+ DGI
+ S5 — Dashboard +        1 semaine       Tableau de bord deadlines, alertes email, tests E2E
+ QA
+
+
+Phase 2 — Complet (Mois 4–6)
+    •     Intégration API e-impôts.gouv.ci (dépôt DSF + visa électronique direct)
+    •     Module paie complet : bulletins CNPS, déclarations mensuelles, DSN
+    •     PWA offline-first avec synchronisation intelligente
+    •     Portail client sécurisé : dépôt pièces, consultation états
+    •     Facturation honoraires : suivi temps passé, génération factures
+
+Phase 3 — Expansion (Mois 7–12)
+    •     OCR pièces comptables : photo de facture → écriture pré-remplie
+    •     Adaptation Sénégal / Cameroun (même SYSCOHADA, tableaux fiscaux différents)
+    •     API publique pour intégration ERP clients
+    •     Module audit et feuilles de révision
+IvoireCompta — Cahier des Charges Technique   Version 1.0 — Confidentiel
+
+
+
+8. Critères d'acceptance MVP
+ Fonctionnalité               Critère d'acceptance                          Priorité
+ Équilibre écriture           Une écriture déséquilibrée est rejetée        P0
+                              avec message explicite
+ Plan comptable CI            Les 9 classes SYSCOHADA et sous-              P0
+                              comptes CI sont disponibles
+ Calcul IS/IMF                MAX(IS 25%, IMF min 3M FCFA) calculé          P0
+                              correctement — 16 tests unitaires
+ 9 tableaux DGI-CI            T07 et T08 générés cohérents avec les         P0
+                              écritures de l'exercice
+ Contrôle DSF                 Bilan déséquilibré bloque le dépôt avec       P0
+                              message explicite
+ Alertes deadlines            Email envoyé J-30, J-15, J-7 avant            P0
+                              chaque échéance fiscale
+ Multi-tenant                 Un cabinet ne peut jamais accéder aux         P0
+                              données d'un autre cabinet
+ Performance                  Génération des 9 tableaux < 3 secondes        P1
+                              pour 10 000 lignes
+ Audit log                    Toute validation d'écriture est tracée dans   P1
+                              audit_logs
+ Export                       Balance et états exportables en PDF et        P1
+                              Excel
+
+
+
+
+IvoireCompta — Cahier des Charges v1.0 — Confidentiel
+

@@ -44,6 +44,14 @@ ivoirecompta/
 - npm >= 10
 - Docker & Docker Compose (pour la base de données locale)
 
+## Inscription
+
+- **Web** : `/inscription` — parcours 4 étapes (type cabinet / expert, infos cabinet, compte expert, confirmation).
+- **API** : `POST /auth/register` (public). `ncc` = NIF (N° contribuable DGI), optionnel sauf si `gestionFacturation: true`. Champs optionnels : `rccm`, `adresse`, `secteurActivite`, etc.
+- Après mise à jour Prisma : `npm run db:push` (depuis la racine ou `apps/api`).
+
+**Champs côté marché CI** : le **n° d’ordre ONECCA** est le plus critique (tenant + visa DSF). Le **RCCM** est recommandé mais peut rester optionnel au MVP. **Secteur / spécialisation** servent surtout au produit (pas imposés par la DGI pour la compta).
+
 ## Démarrage en développement
 
 ```bash
