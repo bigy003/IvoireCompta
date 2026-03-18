@@ -346,8 +346,9 @@ export default function DashboardPage() {
               <p className="text-3xl font-bold text-green-600 mt-1 tabular-nums">
                 {kpis.declarationsDeposeesMois}
               </p>
-              <p className="text-xs text-gray-400 mt-2">
-                Déclarations déposées · {kpis.echeancesProchaines} échéance(s) sous 30 j.
+              <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+                Déclarations déposées · {kpis.echeancesProchaines}{" "}
+                <span className="whitespace-nowrap">échéance(s) sous 30&nbsp;jours</span>
               </p>
             </div>
           </div>

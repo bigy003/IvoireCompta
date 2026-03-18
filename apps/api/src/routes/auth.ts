@@ -211,6 +211,46 @@ export async function authRoutes(app: FastifyInstance) {
   })
 
   /**
+   * GET /auth/me
+   * Profil connecté + cabinet (paramètres)
+   */
+  app.get("/me", async (request, reply) => {
+    const jwt = request.user as { id: string; cabinetId: string }
+    const u = await prisma.utilisateur.findFirst({
+      where: { id: jwt.id, cabinetId: jwt.cabinetId, actif: true },
+      include: { cabinet: true },
+    })
+    if (!u) return reply.status(404).send({ error: "Utilisateur introuvable" })
+    const c = u.cabinet
+    return reply.send({
+      utilisateur: {
+        id: u.id,
+        prenom: u.prenom,
+        nom: u.nom,
+        email: u.email,
+        role: u.role,
+        numeroOrdre: u.numeroOrdre,
+        specialisation: u.specialisation,
+        totpActif: u.totpActif,
+        dernierAcces: u.dernierAcces,
+      },
+      cabinet: {
+        id: c.id,
+        nom: c.nom,
+        numeroOrdre: c.numeroOrdre,
+        rccm: c.rccm,
+        ncc: c.ncc,
+        secteurActivite: c.secteurActivite,
+        adresse: c.adresse,
+        telephone: c.telephone,
+        email: c.email,
+        regimeFiscal: c.regimeFiscal,
+        planComptable: c.planComptable,
+      },
+    })
+  })
+
+  /**
    * POST /auth/visa/verifier
    * Vérifie le code TOTP avant d'apposer un visa sur une DSF
    * Endpoint séparé — action critique avec traçabilité

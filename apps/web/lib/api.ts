@@ -24,6 +24,9 @@ api.interceptors.response.use(
 )
 
 export const login = (email: string, password: string) => api.post("/auth/login", { email, password })
+export const getMe = () => api.get("/auth/me")
+export const totpSetup = () => api.post("/auth/totp/setup")
+export const totpConfirmer = (totpCode: string) => api.post("/auth/totp/confirmer", { totpCode })
 
 export type RegisterPayload = {
   cabinetNom: string
@@ -75,7 +78,56 @@ export const initialiserComptabiliteClient = (id: string) =>
   api.post(`/clients/${id}/initialiser-comptabilite`)
 export const getDashboard = () => api.get("/dashboard")
 export const getEcheances = () => api.get("/declarations/echeances")
+export const getDeclarationsPilotage = () => api.get("/declarations/pilotage")
 export const getEcritures = (params: Record<string, string>) => api.get("/ecritures", { params })
 export const getBalance   = (exerciceId: string) => api.get("/ecritures/balance", { params: { exerciceId } })
 export const creerEcriture = (data: unknown) => api.post("/ecritures", data)
 export const genererDSF   = (exerciceId: string) => api.post("/declarations/dsf/generer", { exerciceId })
+export const getDsfParExercice = (exerciceId: string) =>
+  api.get(`/declarations/dsf/exercice/${exerciceId}`)
+
+/** Paie */
+export const getPaieEmployes = (clientId: string) =>
+  api.get("/paie/employes", { params: { clientId } })
+export const createPaieEmploye = (data: {
+  clientId: string
+  matricule: string
+  nom: string
+  prenom: string
+  dateEmbauche: string
+  categorieCnps?: string
+  codeCategorie?: string
+  salaireBase: number
+  primes?: Record<string, number>
+  poste?: string | null
+  dateNaissance?: string | null
+  actif?: boolean
+}) => api.post("/paie/employes", data)
+export const patchPaieEmploye = (
+  id: string,
+  data: Partial<{
+    matricule: string
+    nom: string
+    prenom: string
+    dateEmbauche: string
+    categorieCnps: string
+    codeCategorie: string
+    salaireBase: number
+    primes: Record<string, number>
+    poste: string | null
+    dateNaissance: string | null
+    actif: boolean
+  }>
+) => api.patch(`/paie/employes/${id}`, data)
+export const getPaieSynthese = (clientId: string, mois: number, annee: number) =>
+  api.get("/paie/synthese", { params: { clientId, mois, annee } })
+export const getPaiePeriode = (clientId: string, mois: number, annee: number) =>
+  api.get("/paie/periode", { params: { clientId, mois, annee } })
+export const genererBulletinPaie = (data: {
+  employeId: string
+  mois: number
+  annee: number
+  primes?: Record<string, number>
+}) => api.post("/paie/bulletins/generer", data)
+export const postRecapCnps = (clientId: string, mois: number, annee: number) =>
+  api.post("/paie/recap-cnps", { clientId, mois, annee })

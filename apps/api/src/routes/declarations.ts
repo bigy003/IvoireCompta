@@ -18,6 +18,11 @@ import {
 
 const prisma = new PrismaClient()
 
+/** BigInt non sérialisable en JSON → provoque 500 si on renvoie t07–t09 bruts */
+function jsonSansBigInt<T>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj, (_k, v) => (typeof v === "bigint" ? v.toString() : v)))
+}
+
 export async function declarationRoutes(app: FastifyInstance) {
 
   /**
@@ -25,8 +30,12 @@ export async function declarationRoutes(app: FastifyInstance) {
    * Génère automatiquement les 9 tableaux DGI-CI depuis les écritures
    */
   app.post("/dsf/generer", async (request, reply) => {
+    try {
     const user = request.user as { id: string; cabinetId: string }
     const { exerciceId } = request.body as { exerciceId: string }
+    if (!exerciceId || typeof exerciceId !== "string") {
+      return reply.status(400).send({ error: "exerciceId requis (UUID de l’exercice comptable)" })
+    }
 
     // Récupérer toutes les écritures validées de l'exercice
     const lignes = await prisma.ligneEcriture.findMany({
@@ -51,6 +60,9 @@ export async function declarationRoutes(app: FastifyInstance) {
     })
 
     if (!exercice) return reply.status(404).send({ error: "Exercice introuvable" })
+    if (exercice.dossier.client.cabinetId !== user.cabinetId) {
+      return reply.status(403).send({ error: "Cet exercice n’appartient pas à votre cabinet" })
+    }
 
     // ── Agrégation des soldes par compte ────────────────────────
     const soldes = new Map<string, { libelle: string; debit: bigint; credit: bigint }>()
@@ -141,34 +153,104 @@ export async function declarationRoutes(app: FastifyInstance) {
         periodeAnnee:     exercice.annee,
         dateEcheance:     dateClotureExo,
         statut:           "EN_PREPARATION",
-        montantDu:        rf.impotDu,
+        montantDu:        rf.impotDu.toString(),
       },
       update: {
-        statut:   "EN_PREPARATION",
-        montantDu: rf.impotDu,
+        statut:    "EN_PREPARATION",
+        montantDu: rf.impotDu.toString(),
         updatedAt: new Date(),
       },
     })
 
-    // Sauvegarder T07, T08, T09
+    const t07j = jsonSansBigInt(t07)
+    const t08j = jsonSansBigInt(t08)
+    const t09j = jsonSansBigInt(t09)
+
     for (const [code, donnees] of [
-      ["T07", t07], ["T08", t08], ["T09", t09],
+      ["T07", t07j], ["T08", t08j], ["T09", t09j],
     ] as const) {
       await prisma.tableauDsf.upsert({
         where:  { declarationId_codeTableau: { declarationId: declaration.id, codeTableau: code } },
-        create: { declarationId: declaration.id, codeTableau: code, libelleTableau: getLabelTableau(code), donnees: donnees as any, valide: controles.erreurs.length === 0 },
-        update: { donnees: donnees as any, valide: controles.erreurs.length === 0, updatedAt: new Date() },
+        create: { declarationId: declaration.id, codeTableau: code, libelleTableau: getLabelTableau(code), donnees: donnees as object, valide: controles.erreurs.length === 0 },
+        update: { donnees: donnees as object, valide: controles.erreurs.length === 0, updatedAt: new Date() },
       })
     }
 
+    const declarationJson = {
+      id:             declaration.id,
+      exerciceId:     declaration.exerciceId,
+      typeDeclaration: declaration.typeDeclaration,
+      periodeAnnee:   declaration.periodeAnnee,
+      statut:         declaration.statut,
+      montantDu:      declaration.montantDu != null ? declaration.montantDu.toString() : null,
+      dateEcheance:   declaration.dateEcheance.toISOString(),
+      updatedAt:      declaration.updatedAt.toISOString(),
+    }
+
     return reply.send({
-      declaration,
-      tableaux:     { t07, t08, t09 },
+      declaration: declarationJson,
+      tableaux:    { t07: t07j, t08: t08j, t09: t09j },
       controles,
-      pret:         controles.erreurs.length === 0,
-      message:      controles.erreurs.length === 0
+      pret:        controles.erreurs.length === 0,
+      message:     controles.erreurs.length === 0
         ? "DSF prête pour visa — tous les contrôles passent"
         : `${controles.erreurs.length} erreur(s) à corriger avant le visa`,
+    })
+    } catch (err) {
+      request.log.error(err)
+      const msg = err instanceof Error ? err.message : "Erreur serveur lors de la génération DSF"
+      return reply.status(500).send({ error: msg })
+    }
+  })
+
+  /**
+   * GET /declarations/dsf/exercice/:exerciceId
+   * Tableaux T07–T09 enregistrés après génération
+   */
+  app.get("/dsf/exercice/:exerciceId", async (request, reply) => {
+    const user       = request.user as { cabinetId: string }
+    const exerciceId = (request.params as { exerciceId: string }).exerciceId
+
+    const ex = await prisma.exercice.findFirst({
+      where: { id: exerciceId, dossier: { client: { cabinetId: user.cabinetId } } },
+      select: {
+        id:    true,
+        annee: true,
+        dossier: {
+          select: { client: { select: { nomRaisonSociale: true, ncc: true } } },
+        },
+      },
+    })
+    if (!ex) return reply.status(404).send({ error: "Exercice introuvable" })
+
+    const declId = `dsf-${exerciceId}`
+    const decl   = await prisma.declarationFiscale.findFirst({
+      where:   { id: declId },
+      include: { tableauxDsf: { orderBy: { codeTableau: "asc" } } },
+    })
+    if (!decl?.tableauxDsf.length) {
+      return reply.status(404).send({ error: "Aucune DSF générée pour cet exercice — utilisez « Générer DSF »." })
+    }
+
+    return reply.send({
+      exercice: {
+        id:        ex.id,
+        annee:     ex.annee,
+        clientNom: ex.dossier.client.nomRaisonSociale,
+        clientNcc: ex.dossier.client.ncc,
+      },
+      declaration: {
+        id:        decl.id,
+        statut:    decl.statut,
+        montantDu: decl.montantDu?.toString() ?? null,
+        updatedAt: decl.updatedAt,
+      },
+      tableaux: decl.tableauxDsf.map(t => ({
+        code:    t.codeTableau,
+        libelle: t.libelleTableau,
+        valide:  t.valide,
+        donnees: t.donnees,
+      })),
     })
   })
 
@@ -273,6 +355,88 @@ export async function declarationRoutes(app: FastifyInstance) {
     })
 
     return reply.send({ echeances: enrichies, total: enrichies.length })
+  })
+
+  /**
+   * GET /declarations/pilotage
+   * Vue DSF & déclarations : toutes les échéances du cabinet + KPIs + exerciceId pour DSF
+   */
+  app.get("/pilotage", async (request, reply) => {
+    const user = request.user as { cabinetId: string }
+    const clients = await prisma.client.findMany({
+      where: { cabinetId: user.cabinetId, actif: true },
+      select: { id: true, nomRaisonSociale: true, ncc: true },
+    })
+    const clientIds = clients.map(c => c.id)
+    if (clientIds.length === 0) {
+      return reply.send({
+        kpis: { aFaire: 0, urgentes: 0, deposees: 0 },
+        lignes: [],
+      })
+    }
+
+    const rows = await prisma.echeanceFiscale.findMany({
+      where: { clientId: { in: clientIds } },
+      orderBy: [{ dateEcheance: "asc" }, { clientId: "asc" }],
+    })
+
+    const exercices = await prisma.exercice.findMany({
+      where: { dossier: { clientId: { in: clientIds } } },
+      select: { id: true, annee: true, dossier: { select: { clientId: true } } },
+    })
+    const exParClientAnnee = new Map<string, string>()
+    for (const ex of exercices) {
+      exParClientAnnee.set(`${ex.dossier.clientId}:${ex.annee}`, ex.id)
+    }
+
+    const maintenant = new Date()
+    const debutJour = new Date(maintenant.getFullYear(), maintenant.getMonth(), maintenant.getDate())
+
+    const nomPar = Object.fromEntries(clients.map(c => [c.id, c.nomRaisonSociale]))
+    const nccPar = Object.fromEntries(clients.map(c => [c.id, c.ncc]))
+
+    const lignes = rows.map(r => {
+      let exerciceId: string | null = null
+      if (r.typeDeclaration === "DSF_ANNUELLE") {
+        const m = r.periodeLabel.match(/DSF-(\d{4})/i)
+        if (m) {
+          exerciceId = exParClientAnnee.get(`${r.clientId}:${parseInt(m[1], 10)}`) ?? null
+        }
+      }
+
+      const joursRestants = Math.ceil((r.dateEcheance.getTime() - maintenant.getTime()) / 86_400_000)
+
+      let uiStatut: "DEPOSEE" | "EN_RETARD" | "URGENT" | "A_FAIRE"
+      if (r.statut === "FAITE") {
+        uiStatut = "DEPOSEE"
+      } else if (r.dateEcheance < debutJour || r.statut === "EN_RETARD") {
+        uiStatut = "EN_RETARD"
+      } else if (joursRestants <= 7) {
+        uiStatut = "URGENT"
+      } else {
+        uiStatut = "A_FAIRE"
+      }
+
+      return {
+        id: r.id,
+        clientId: r.clientId,
+        clientNom: nomPar[r.clientId] ?? "—",
+        clientNcc: nccPar[r.clientId] ?? "—",
+        typeDeclaration: r.typeDeclaration,
+        periodeLabel: r.periodeLabel,
+        dateEcheance: r.dateEcheance.toISOString(),
+        joursRestants,
+        statutEcheance: r.statut,
+        uiStatut,
+        exerciceId,
+      }
+    })
+
+    const deposees = lignes.filter(l => l.uiStatut === "DEPOSEE").length
+    const urgentes = lignes.filter(l => l.uiStatut === "EN_RETARD" || l.uiStatut === "URGENT").length
+    const aFaire = lignes.filter(l => l.uiStatut === "A_FAIRE").length
+
+    return reply.send({ kpis: { aFaire, urgentes, deposees }, lignes })
   })
 }
 

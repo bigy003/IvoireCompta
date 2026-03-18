@@ -247,7 +247,7 @@ async function main() {
 
   await prisma.employe.upsert({
     where: { clientId_matricule: { clientId: client1.id, matricule: "EMP-001" } },
-    update: {},
+    update: { poste: "Comptable" },
     create: {
       clientId: client1.id,
       matricule: "EMP-001",
@@ -256,6 +256,7 @@ async function main() {
       dateEmbauche: new Date("2022-03-01"),
       categorieCnps: "Cadre",
       codeCategorie: "C3",
+      poste: "Comptable",
       salaireBase: 450000,
     },
   })

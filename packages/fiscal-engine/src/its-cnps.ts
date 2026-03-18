@@ -71,8 +71,8 @@ export interface TranchITS {
 export function calculerBulletinPaie(
   salaireBrut: bigint,
   nombreEnfants: number,
-  tauxAccidentTravail = TAUX_CNPS.ACCIDENT_TRAVAIL_MIN,
-  tauxFdfp = TAUX_CNPS.FDFP_MIN
+  tauxAccidentTravail: number = TAUX_CNPS.ACCIDENT_TRAVAIL_MIN,
+  tauxFdfp: number = TAUX_CNPS.FDFP_MIN
 ): BulletinCalcule {
   // ── Plafonnement assiette CNPS ────────────────────────────────
   const assietteCnps = salaireBrut > TAUX_CNPS.PLAFOND_MENSUEL

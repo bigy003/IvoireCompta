@@ -269,6 +269,7 @@ model Employe {
   dateEmbauche    DateTime
   categorieCnps   String   // Catégorie socioprofessionnelle
   codeCategorie   String   // Code CNPS
+  poste           String?  // Intitulé du poste (affichage paie)
   salaireBase     Decimal  @db.Decimal(18,0)
   primes          Json     @default("{}")  // {transport: 30000, logement: 50000}
   avantages       Json     @default("{}")
