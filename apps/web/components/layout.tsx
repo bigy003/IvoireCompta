@@ -47,7 +47,7 @@ export default function Layout({ children }: Props) {
       {/* Header flottant */}
       <div className="px-8 py-4">
         <div className="max-w-7xl mx-auto">
-          <div className="bg-white rounded-2xl shadow-lg px-6 py-3 flex items-center justify-between">
+          <div className="bg-white rounded-2xl shadow-lg px-6 py-3 flex items-center justify-between relative z-50 isolate">
 
             {/* Logo */}
             <div
@@ -66,15 +66,15 @@ export default function Layout({ children }: Props) {
                 <button
                   key={item.href}
                   onClick={() => router.push(item.href)}
-                  className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+                  className={`px-4 py-2 text-sm transition-colors relative rounded-md [-webkit-font-smoothing:auto] ${
                     pathname === item.href
-                      ? "text-orange-500"
-                      : "text-gray-600 hover:text-gray-900"
+                      ? "font-semibold text-orange-600 tracking-tight"
+                      : "font-medium text-gray-700 hover:text-gray-900"
                   }`}
                 >
                   {item.label}
                   {pathname === item.href && (
-                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-orange-500 rounded-full"></div>
+                    <div className="absolute bottom-0 left-1 right-1 h-0.5 bg-orange-600 rounded-full" />
                   )}
                 </button>
               ))}

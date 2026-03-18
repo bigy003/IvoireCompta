@@ -44,8 +44,35 @@ export type RegisterPayload = {
 }
 
 export const register = (data: RegisterPayload) => api.post("/auth/register", data)
-export const getClients = () => api.get("/clients")
+export const getClients = (opts?: { tous?: boolean }) =>
+  api.get("/clients", { params: opts?.tous ? { tous: "1" } : undefined })
+export const createClient = (data: {
+  ncc: string
+  nomRaisonSociale: string
+  formeJuridique?: string
+  regimeImposition?: string
+  assujettitTVA?: boolean
+  email?: string
+  telephone?: string
+}) => api.post("/clients", data)
+export const updateClient = (
+  id: string,
+  data: Partial<{
+    ncc: string
+    nomRaisonSociale: string
+    formeJuridique: string
+    regimeImposition: string
+    assujettitTVA: boolean
+    email: string
+    telephone: string
+    actif: boolean
+  }>
+) => api.patch(`/clients/${id}`, data)
+export const deleteClient = (id: string) => api.delete(`/clients/${id}`)
 export const getClient  = (id: string) => api.get(`/clients/${id}`)
+/** Dossier + exercice année en cours + journaux (idempotent) */
+export const initialiserComptabiliteClient = (id: string) =>
+  api.post(`/clients/${id}/initialiser-comptabilite`)
 export const getDashboard = () => api.get("/dashboard")
 export const getEcheances = () => api.get("/declarations/echeances")
 export const getEcritures = (params: Record<string, string>) => api.get("/ecritures", { params })

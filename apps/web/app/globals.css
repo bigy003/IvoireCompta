@@ -25,3 +25,33 @@ body {
     text-wrap: balance;
   }
 }
+
+/* Calendrier IvoireCompta (react-day-picker) */
+.ivoire-daypicker-popover .rdp-root {
+  --rdp-accent-color: #ea580c;
+  --rdp-accent-background-color: #ffedd5;
+  --rdp-day_button-border-radius: 10px;
+  --rdp-day_button-height: 2.5rem;
+  --rdp-day_button-width: 2.5rem;
+  --rdp-nav_button-height: 2.25rem;
+  --rdp-nav_button-width: 2.25rem;
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.ivoire-daypicker-popover .rdp-dropdown_root {
+  border-radius: 0.75rem;
+  border: 1px solid #e5e7eb;
+  background: #fafafa;
+  padding: 0.35rem 0.75rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.ivoire-daypicker-popover .rdp-dropdown_root:hover {
+  border-color: #fdba74;
+}
+
+.ivoire-daypicker-popover .rdp-month_caption {
+  padding-bottom: 0.5rem;
+}

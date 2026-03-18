@@ -52,6 +52,15 @@ ivoirecompta/
 
 **Champs côté marché CI** : le **n° d’ordre ONECCA** est le plus critique (tenant + visa DSF). Le **RCCM** est recommandé mais peut rester optionnel au MVP. **Secteur / spécialisation** servent surtout au produit (pas imposés par la DGI pour la compta).
 
+### Clients & comptabilité (MVP)
+
+- **`POST /clients`** (auth) : crée le client **et** en transaction un dossier « Comptabilité », un **exercice pour l’année civile en cours** (01/01–31/12, ouvert) et les **6 journaux** (AC, VT, BQ, CA, OD, SA), comme le seed BSCI.
+- **`POST /clients/:id/initialiser-comptabilite`** (auth, idempotent) : pour les clients créés avant cette logique — complète dossier / exercice année en cours / journaux. La page **Écritures** l’appelle automatiquement si besoin.
+- **`PATCH /clients/:id`** (auth) : mise à jour des infos (NCC, raison sociale, forme, régime, TVA, e-mail, téléphone).
+- **`DELETE /clients/:id`** (auth) : désactive le client (`actif: false`) — il disparaît de la liste ; historique comptable conservé.
+- **`GET /clients?tous=1`** : inclut les clients inactifs (sinon seulement `actif: true`, ex. liste déroulante Écritures).
+- **`PATCH /clients/:id`** : peut inclure `actif: true` pour réactiver un client.
+
 ## Démarrage en développement
 
 ```bash
@@ -69,6 +78,9 @@ docker-compose -f docker-compose.dev.yml up -d
 
 # 4. Initialiser la base de données
 npm run db:push
+
+# 4bis. (Recommandé) Données de démo : cabinet Konan, BSCI, exercice 2025, journaux, écritures test
+npm run db:seed
 
 # 5. Démarrer tous les services
 npm run dev
