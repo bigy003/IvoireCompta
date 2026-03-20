@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 import Cookies from "js-cookie"
 import Layout from "@/components/layout"
-import { getDashboard } from "@/lib/api"
+import { getDashboard, previewAlertesEcheances, runAlertesEcheances } from "@/lib/api"
 
 const TYPE_DECL_LABEL: Record<string, string> = {
   TVA_MENSUELLE: "TVA mensuelle",
@@ -57,6 +57,16 @@ type DashboardData = {
   activiteMensuelle: ActiviteMois[]
   echeances: EcheanceRow[]
   alertes: EcheanceRow[]
+}
+
+type AlertePreview = {
+  echeanceId: string
+  clientNom: string
+  typeDeclaration: string
+  periodeLabel: string
+  dateEcheance: string
+  joursRestants: number
+  seuil: "J30" | "J15" | "J7"
 }
 
 const emptyDashboard: DashboardData = {
@@ -199,6 +209,9 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState<DashboardData>(emptyDashboard)
   const [fetchError, setFetchError] = useState<string | null>(null)
+  const [notifLoading, setNotifLoading] = useState(false)
+  const [notifMsg, setNotifMsg] = useState("")
+  const [notifPreview, setNotifPreview] = useState<AlertePreview[]>([])
 
   useEffect(() => {
     if (!Cookies.get("token")) {
@@ -274,6 +287,37 @@ export default function DashboardPage() {
     dossiersParStatut.SUSPENDU +
     dossiersParStatut.CLOTURE +
     dossiersParStatut.ARCHIVE
+
+  async function chargerPreviewAlertes() {
+    setNotifLoading(true)
+    setNotifMsg("")
+    try {
+      const r = await previewAlertesEcheances()
+      setNotifPreview((r.data?.alerts ?? []) as AlertePreview[])
+      setNotifMsg(`Prévisualisation chargée (${r.data?.total ?? 0} alerte(s) à déclencher).`)
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+      setNotifMsg(typeof msg === "string" ? msg : "Impossible de charger la prévisualisation.")
+    } finally {
+      setNotifLoading(false)
+    }
+  }
+
+  async function lancerAlertes() {
+    setNotifLoading(true)
+    setNotifMsg("")
+    try {
+      const r = await runAlertesEcheances()
+      const c = r.data?.compteurs ?? { j30: 0, j15: 0, j7: 0, total: 0 }
+      setNotifMsg(`Alertes traitées: J30=${c.j30}, J15=${c.j15}, J7=${c.j7}, total=${c.total}.`)
+      await chargerPreviewAlertes()
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+      setNotifMsg(typeof msg === "string" ? msg : "Échec du traitement des alertes.")
+    } finally {
+      setNotifLoading(false)
+    }
+  }
 
   return (
     <Layout>
@@ -398,6 +442,37 @@ export default function DashboardPage() {
                 <Link href="/dsf" className="text-sm font-semibold text-orange-500 hover:text-orange-600">
                   DSF & déclarations
                 </Link>
+              </div>
+              <div className="mt-5 pt-4 border-t border-gray-100">
+                <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Notifications échéances</p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={chargerPreviewAlertes}
+                    disabled={notifLoading}
+                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:border-orange-300 disabled:opacity-50"
+                  >
+                    Prévisualiser
+                  </button>
+                  <button
+                    type="button"
+                    onClick={lancerAlertes}
+                    disabled={notifLoading}
+                    className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-600 disabled:opacity-50"
+                  >
+                    Lancer alertes
+                  </button>
+                </div>
+                {notifMsg && <p className="mt-2 text-xs text-gray-600">{notifMsg}</p>}
+                {notifPreview.length > 0 && (
+                  <ul className="mt-2 space-y-1 text-xs text-gray-500 max-h-24 overflow-y-auto pr-1">
+                    {notifPreview.slice(0, 5).map(a => (
+                      <li key={a.echeanceId}>
+                        [{a.seuil}] {a.clientNom} — {TYPE_DECL_LABEL[a.typeDeclaration] ?? a.typeDeclaration} (J-{a.joursRestants})
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
 

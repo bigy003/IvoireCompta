@@ -55,3 +55,19 @@ body {
 .ivoire-daypicker-popover .rdp-month_caption {
   padding-bottom: 0.5rem;
 }
+
+/* Impression / Export PDF navigateur */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+
+  body {
+    background: #fff !important;
+  }
+}

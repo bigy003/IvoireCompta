@@ -66,7 +66,7 @@ export default function Layout({ children }: Props) {
         backgroundAttachment: "fixed",
       }}
     >
-      <div className="px-8 py-4">
+      <div className="px-8 py-4 no-print">
         <div className="max-w-7xl mx-auto">
           <div className="bg-white rounded-2xl shadow-lg px-6 py-3 flex items-center justify-between relative z-50 isolate">
             <div

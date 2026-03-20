@@ -79,12 +79,23 @@ export const initialiserComptabiliteClient = (id: string) =>
 export const getDashboard = () => api.get("/dashboard")
 export const getEcheances = () => api.get("/declarations/echeances")
 export const getDeclarationsPilotage = () => api.get("/declarations/pilotage")
+export const previewAlertesEcheances = () => api.get("/declarations/notifications/preview")
+export const runAlertesEcheances = () => api.post("/declarations/notifications/run")
+export const preparerDepotEcheance = (id: string) => api.post(`/declarations/echeances/${id}/preparer`)
+export const deposerEcheance = (id: string, referenceEimpots: string) =>
+  api.post(`/declarations/echeances/${id}/deposer`, { referenceEimpots })
 export const getEcritures = (params: Record<string, string>) => api.get("/ecritures", { params })
 export const getBalance   = (exerciceId: string) => api.get("/ecritures/balance", { params: { exerciceId } })
 export const creerEcriture = (data: unknown) => api.post("/ecritures", data)
 export const genererDSF   = (exerciceId: string) => api.post("/declarations/dsf/generer", { exerciceId })
 export const getDsfParExercice = (exerciceId: string) =>
   api.get(`/declarations/dsf/exercice/${exerciceId}`)
+export const marquerDsfPrete = (id: string) => api.post(`/declarations/${id}/prete`)
+export const verifierVisaDsf = (totpCode: string) => api.post("/auth/visa/verifier", { totpCode })
+export const viserDsf = (id: string, visaToken: string) =>
+  api.post(`/declarations/${id}/viser`, { visaToken })
+export const deposerDsf = (id: string, referenceEimpots: string) =>
+  api.post(`/declarations/${id}/deposer`, { referenceEimpots })
 
 /** Paie */
 export const getPaieEmployes = (clientId: string) =>

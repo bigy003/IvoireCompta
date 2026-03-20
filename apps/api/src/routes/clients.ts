@@ -1,11 +1,55 @@
 import { FastifyInstance } from "fastify"
-import { PrismaClient } from "@prisma/client"
+import { Prisma, PrismaClient } from "@prisma/client"
 import {
   creerMissionComptablePourClient,
   garantirComptabiliteClient,
 } from "../lib/comptabilite-init.js"
+import { genererEcheancesAnnuelles } from "@ivoirecompta/fiscal-engine"
 
 const prisma = new PrismaClient()
+
+function normaliserRegime(
+  r?: string
+): "REEL_NORMAL" | "PME" | "BIC_SIMPLIFIE" | "BNC" {
+  if (r === "BIC_SIMPLIFIE" || r === "BNC") return r
+  // Les régimes non mappés explicitement basculent en réel pour calendrier MVP
+  if (r === "REEL_NORMAL" || r === "REEL_SIMPLIFIE" || r === "ZONE_FRANCHE_ZICI") return "REEL_NORMAL"
+  return "REEL_NORMAL"
+}
+
+async function creerEcheancesClientSiAbsentes(
+  tx: Prisma.TransactionClient,
+  client: { id: string; assujettitTVA: boolean; regimeImposition: string | null },
+  annee: number
+) {
+  const echeances = genererEcheancesAnnuelles(annee, {
+    assujettitTVA: Boolean(client.assujettitTVA),
+    regimeFiscal: normaliserRegime(client.regimeImposition ?? undefined),
+    aDesEmployes: false,
+    dateClotureExo: new Date(annee, 11, 31),
+  })
+  const now = new Date()
+  for (const e of echeances) {
+    const exist = await tx.echeanceFiscale.findFirst({
+      where: {
+        clientId: client.id,
+        typeDeclaration: e.type as any,
+        periodeLabel: e.periodeLabel,
+      },
+      select: { id: true },
+    })
+    if (exist) continue
+    await tx.echeanceFiscale.create({
+      data: {
+        clientId: client.id,
+        typeDeclaration: e.type as any,
+        periodeLabel: e.periodeLabel,
+        dateEcheance: e.dateEcheance,
+        statut: e.dateEcheance < now ? "EN_RETARD" : "A_FAIRE",
+      },
+    })
+  }
+}
 
 export async function clientRoutes(app: FastifyInstance) {
   app.get("/", async (request, reply) => {
@@ -42,6 +86,15 @@ export async function clientRoutes(app: FastifyInstance) {
         },
       })
       await creerMissionComptablePourClient(tx, c.id, annee)
+      await creerEcheancesClientSiAbsentes(
+        tx,
+        {
+          id: c.id,
+          assujettitTVA: c.assujettitTVA,
+          regimeImposition: c.regimeImposition as unknown as string,
+        },
+        annee
+      )
       return c
     })
 
@@ -60,6 +113,17 @@ export async function clientRoutes(app: FastifyInstance) {
     })
     if (!client) return reply.status(404).send({ error: "Client introuvable" })
     const r = await garantirComptabiliteClient(prisma, client.id)
+    await prisma.$transaction(async tx => {
+      await creerEcheancesClientSiAbsentes(
+        tx,
+        {
+          id: client.id,
+          assujettitTVA: client.assujettitTVA,
+          regimeImposition: client.regimeImposition as unknown as string,
+        },
+        r.annee
+      )
+    })
     return reply.send({
       ok: true,
       dossierId: r.dossierId,

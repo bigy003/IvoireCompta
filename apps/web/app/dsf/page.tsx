@@ -5,7 +5,14 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 import Cookies from "js-cookie"
 import Layout from "@/components/layout"
-import { getDeclarationsPilotage, genererDSF, getClients, api } from "@/lib/api"
+import {
+  getDeclarationsPilotage,
+  genererDSF,
+  getClients,
+  api,
+  preparerDepotEcheance,
+  deposerEcheance,
+} from "@/lib/api"
 
 const TYPE_LABEL: Record<string, string> = {
   TVA_MENSUELLE: "TVA mensuelle",
@@ -205,6 +212,32 @@ export default function DsfPage() {
       setErr(messageErreurApi(e))
     } finally {
       setModalLoading(false)
+    }
+  }
+
+  async function onPreparerDepot(row: Ligne) {
+    setErr("")
+    setSucces("")
+    try {
+      const r = await preparerDepotEcheance(row.id)
+      setSucces(r.data?.message ?? "Déclaration marquée en cours.")
+      await load()
+    } catch (e: unknown) {
+      setErr(messageErreurApi(e))
+    }
+  }
+
+  async function onDeposerEimpots(row: Ligne) {
+    const ref = window.prompt("Référence e-impôts (obligatoire) :")
+    if (!ref?.trim()) return
+    setErr("")
+    setSucces("")
+    try {
+      const r = await deposerEcheance(row.id, ref.trim())
+      setSucces(r.data?.message ?? "Déclaration déposée.")
+      await load()
+    } catch (e: unknown) {
+      setErr(messageErreurApi(e))
     }
   }
 
@@ -453,9 +486,22 @@ export default function DsfPage() {
                             </div>
                           )}
                           {row.typeDeclaration !== "DSF_ANNUELLE" && row.uiStatut !== "DEPOSEE" && (
-                            <span className="text-xs text-gray-400 text-center max-w-[8rem]" title="Déclaration via e-impôts — module à venir">
-                              Bientôt (e-impôts)
-                            </span>
+                            <div className="flex flex-wrap items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => onPreparerDepot(row)}
+                                className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 text-xs font-semibold hover:border-orange-300 hover:text-orange-700 whitespace-nowrap"
+                              >
+                                Préparer dépôt
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onDeposerEimpots(row)}
+                                className="px-3 py-1.5 rounded-lg bg-orange-500 text-white text-xs font-semibold hover:bg-orange-600 whitespace-nowrap"
+                              >
+                                Marquer déposée
+                              </button>
+                            </div>
                           )}
                         </div>
                       </td>

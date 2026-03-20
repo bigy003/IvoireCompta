@@ -355,6 +355,8 @@ model EcheanceFiscale {
   periodeLabel    String   // "TVA-2025-03", "DSF-2024"
   dateEcheance    DateTime
   statut          StatutEcheance @default(A_FAIRE)
+  referenceDepot  String?
+  dateDepot       DateTime?
   alerteJ30       Boolean  @default(false)
   alerteJ15       Boolean  @default(false)
   alerteJ7        Boolean  @default(false)

@@ -243,6 +243,9 @@ export async function declarationRoutes(app: FastifyInstance) {
         id:        decl.id,
         statut:    decl.statut,
         montantDu: decl.montantDu?.toString() ?? null,
+        referenceEimpots: decl.referenceEimpots ?? null,
+        dateDepot: decl.dateDepot?.toISOString() ?? null,
+        dateVisa: decl.dateVisa?.toISOString() ?? null,
         updatedAt: decl.updatedAt,
       },
       tableaux: decl.tableauxDsf.map(t => ({
@@ -252,6 +255,30 @@ export async function declarationRoutes(app: FastifyInstance) {
         donnees: t.donnees,
       })),
     })
+  })
+
+  /** Marque la DSF comme prête (sans visa) */
+  app.post("/:id/prete", async (request, reply) => {
+    const user = request.user as { id: string; cabinetId: string }
+    const { id } = request.params as { id: string }
+    const decl = await prisma.declarationFiscale.findFirst({
+      where: {
+        id,
+        typeDeclaration: "DSF_ANNUELLE",
+        exercice: { dossier: { client: { cabinetId: user.cabinetId } } },
+      },
+      include: { tableauxDsf: true },
+    })
+    if (!decl) return reply.status(404).send({ error: "Déclaration introuvable" })
+    if (!decl.tableauxDsf.length) return reply.status(409).send({ error: "Générez d'abord la DSF" })
+    if (decl.statut === "DEPOSEE" || decl.statut === "ACCEPTEE")
+      return reply.status(409).send({ error: "Déclaration déjà déposée" })
+
+    const updated = await prisma.declarationFiscale.update({
+      where: { id },
+      data: { statut: "PRETE", updatedAt: new Date() },
+    })
+    return reply.send({ declaration: updated, message: "DSF marquée prête pour visa/dépôt." })
   })
 
   /**
@@ -319,6 +346,53 @@ export async function declarationRoutes(app: FastifyInstance) {
       declaration: declarationVisee,
       message: "Visa apposé — déclaration prête pour dépôt sur e-impôts.gouv.ci",
       hashIntegrite: hashDocuments,
+    })
+  })
+
+  /** Marque la DSF comme déposée (MVP) */
+  app.post("/:id/deposer", async (request, reply) => {
+    const user = request.user as { id: string; cabinetId: string }
+    const { id } = request.params as { id: string }
+    const { referenceEimpots } = request.body as { referenceEimpots?: string }
+    const ref = (referenceEimpots ?? "").trim()
+    if (!ref) return reply.status(400).send({ error: "referenceEimpots requis" })
+
+    const decl = await prisma.declarationFiscale.findFirst({
+      where: {
+        id,
+        typeDeclaration: "DSF_ANNUELLE",
+        exercice: { dossier: { client: { cabinetId: user.cabinetId } } },
+      },
+      include: { exercice: { include: { dossier: { include: { client: true } } } } },
+    })
+    if (!decl) return reply.status(404).send({ error: "Déclaration introuvable" })
+    if (decl.statut === "DEPOSEE" || decl.statut === "ACCEPTEE")
+      return reply.status(409).send({ error: "Déclaration déjà déposée" })
+
+    const dep = await prisma.$transaction(async tx => {
+      const d = await tx.declarationFiscale.update({
+        where: { id },
+        data: {
+          statut: "DEPOSEE",
+          dateDepot: new Date(),
+          referenceEimpots: ref,
+          updatedAt: new Date(),
+        },
+      })
+      await tx.echeanceFiscale.updateMany({
+        where: {
+          clientId: decl.exercice.dossier.client.id,
+          typeDeclaration: "DSF_ANNUELLE",
+          periodeLabel: `DSF-${decl.periodeAnnee}`,
+        },
+        data: { statut: "FAITE" },
+      })
+      return d
+    })
+
+    return reply.send({
+      declaration: dep,
+      message: "DSF déposée (MVP) et échéance marquée « faite ».",
     })
   })
 
@@ -438,6 +512,205 @@ export async function declarationRoutes(app: FastifyInstance) {
 
     return reply.send({ kpis: { aFaire, urgentes, deposees }, lignes })
   })
+
+  /**
+   * GET /declarations/notifications/preview
+   * Prévisualise les alertes J-30 / J-15 / J-7 à déclencher
+   */
+  app.get("/notifications/preview", async (request, reply) => {
+    const user = request.user as { cabinetId: string }
+    const now = new Date()
+    const clients = await prisma.client.findMany({
+      where: { cabinetId: user.cabinetId, actif: true },
+      select: { id: true, nomRaisonSociale: true, ncc: true },
+    })
+    const clientIds = clients.map(c => c.id)
+    if (clientIds.length === 0) {
+      return reply.send({
+        destinataires: { email: null, whatsapp: null },
+        parametres: { j30: true, j15: true, j7: true },
+        total: 0,
+        alerts: [],
+      })
+    }
+    const clientParId = Object.fromEntries(
+      clients.map(c => [c.id, { nom: c.nomRaisonSociale, ncc: c.ncc }])
+    )
+    const p = await prisma.parametreCabinet.findUnique({
+      where: { cabinetId: user.cabinetId },
+      select: {
+        alerteJ30: true,
+        alerteJ15: true,
+        alerteJ7: true,
+        emailAlertes: true,
+        whatsappAlertes: true,
+      },
+    })
+    const enabled = {
+      j30: p?.alerteJ30 ?? true,
+      j15: p?.alerteJ15 ?? true,
+      j7: p?.alerteJ7 ?? true,
+    }
+
+    const rows = await prisma.echeanceFiscale.findMany({
+      where: {
+        clientId: { in: clientIds },
+        statut: { in: ["A_FAIRE", "EN_COURS", "EN_RETARD"] },
+      },
+      orderBy: { dateEcheance: "asc" },
+    })
+
+    const alerts = rows
+      .map(r => {
+        const joursRestants = Math.ceil((r.dateEcheance.getTime() - now.getTime()) / 86_400_000)
+        const seuil = seuilAlerte(joursRestants)
+        if (!seuil) return null
+        if (seuil === "J30" && (!enabled.j30 || r.alerteJ30)) return null
+        if (seuil === "J15" && (!enabled.j15 || r.alerteJ15)) return null
+        if (seuil === "J7" && (!enabled.j7 || r.alerteJ7)) return null
+        return {
+          echeanceId: r.id,
+          clientId: r.clientId,
+          clientNom: clientParId[r.clientId]?.nom ?? "—",
+          clientNcc: clientParId[r.clientId]?.ncc ?? "—",
+          typeDeclaration: r.typeDeclaration,
+          periodeLabel: r.periodeLabel,
+          dateEcheance: r.dateEcheance,
+          joursRestants,
+          seuil,
+        }
+      })
+      .filter(Boolean)
+
+    return reply.send({
+      destinataires: { email: p?.emailAlertes ?? null, whatsapp: p?.whatsappAlertes ?? null },
+      parametres: enabled,
+      total: alerts.length,
+      alerts,
+    })
+  })
+
+  /** Prépare une déclaration non-DSF pour dépôt e-impôts (MVP) */
+  app.post("/echeances/:id/preparer", async (request, reply) => {
+    const user = request.user as { id: string; cabinetId: string }
+    const { id } = request.params as { id: string }
+    const e = await prisma.echeanceFiscale.findUnique({ where: { id } })
+    if (!e) return reply.status(404).send({ error: "Échéance introuvable" })
+    if (e.typeDeclaration === "DSF_ANNUELLE")
+      return reply.status(409).send({ error: "Utilisez le workflow DSF pour cette échéance." })
+    const client = await prisma.client.findFirst({ where: { id: e.clientId, cabinetId: user.cabinetId } })
+    if (!client) return reply.status(403).send({ error: "Accès refusé à cette échéance" })
+    if (e.statut === "FAITE") return reply.status(409).send({ error: "Échéance déjà déposée" })
+
+    const up = await prisma.echeanceFiscale.update({
+      where: { id },
+      data: { statut: "EN_COURS" },
+    })
+    return reply.send({ echeance: up, message: "Déclaration marquée « en cours de dépôt »." })
+  })
+
+  /** Marque une déclaration non-DSF comme déposée (MVP e-impôts) */
+  app.post("/echeances/:id/deposer", async (request, reply) => {
+    const user = request.user as { id: string; cabinetId: string }
+    const { id } = request.params as { id: string }
+    const { referenceEimpots } = request.body as { referenceEimpots?: string }
+    const ref = (referenceEimpots ?? "").trim()
+    if (!ref) return reply.status(400).send({ error: "referenceEimpots requis" })
+
+    const e = await prisma.echeanceFiscale.findUnique({ where: { id } })
+    if (!e) return reply.status(404).send({ error: "Échéance introuvable" })
+    if (e.typeDeclaration === "DSF_ANNUELLE")
+      return reply.status(409).send({ error: "Utilisez le workflow DSF pour cette échéance." })
+    const client = await prisma.client.findFirst({ where: { id: e.clientId, cabinetId: user.cabinetId } })
+    if (!client) return reply.status(403).send({ error: "Accès refusé à cette échéance" })
+
+    const up = await prisma.echeanceFiscale.update({
+      where: { id },
+      data: { statut: "FAITE", dateDepot: new Date(), referenceDepot: ref },
+    })
+    return reply.send({ echeance: up, message: "Déclaration marquée déposée (e-impôts)." })
+  })
+
+  /**
+   * POST /declarations/notifications/run
+   * MVP : marque les alertes comme "envoyées" (sans transport email/wa)
+   */
+  app.post("/notifications/run", async (request, reply) => {
+    const user = request.user as { id: string; cabinetId: string }
+    const now = new Date()
+    const clients = await prisma.client.findMany({
+      where: { cabinetId: user.cabinetId, actif: true },
+      select: { id: true },
+    })
+    const clientIds = clients.map(c => c.id)
+    if (clientIds.length === 0) {
+      return reply.send({
+        message: "Aucun client actif pour traiter des alertes.",
+        compteurs: { j30: 0, j15: 0, j7: 0, total: 0 },
+      })
+    }
+    const p = await prisma.parametreCabinet.findUnique({
+      where: { cabinetId: user.cabinetId },
+      select: { alerteJ30: true, alerteJ15: true, alerteJ7: true },
+    })
+    const enabled = {
+      j30: p?.alerteJ30 ?? true,
+      j15: p?.alerteJ15 ?? true,
+      j7: p?.alerteJ7 ?? true,
+    }
+    const rows = await prisma.echeanceFiscale.findMany({
+      where: {
+        clientId: { in: clientIds },
+        statut: { in: ["A_FAIRE", "EN_COURS", "EN_RETARD"] },
+      },
+      select: {
+        id: true,
+        clientId: true,
+        typeDeclaration: true,
+        periodeLabel: true,
+        dateEcheance: true,
+        alerteJ30: true,
+        alerteJ15: true,
+        alerteJ7: true,
+      },
+    })
+
+    let j30 = 0
+    let j15 = 0
+    let j7 = 0
+    for (const r of rows) {
+      const joursRestants = Math.ceil((r.dateEcheance.getTime() - now.getTime()) / 86_400_000)
+      const seuil = seuilAlerte(joursRestants)
+      if (seuil === "J30" && enabled.j30 && !r.alerteJ30) {
+        await prisma.echeanceFiscale.update({ where: { id: r.id }, data: { alerteJ30: true } })
+        j30++
+      }
+      if (seuil === "J15" && enabled.j15 && !r.alerteJ15) {
+        await prisma.echeanceFiscale.update({ where: { id: r.id }, data: { alerteJ15: true } })
+        j15++
+      }
+      if (seuil === "J7" && enabled.j7 && !r.alerteJ7) {
+        await prisma.echeanceFiscale.update({ where: { id: r.id }, data: { alerteJ7: true } })
+        j7++
+      }
+    }
+
+    await prisma.auditLog.create({
+      data: {
+        cabinetId: user.cabinetId,
+        userId: user.id,
+        action: "ALERTES_ECHEANCES_RUN",
+        entite: "echeances_fiscales",
+        entiteId: "batch",
+        donneeApres: { j30, j15, j7, total: j30 + j15 + j7 },
+      },
+    })
+
+    return reply.send({
+      message: "Traitement des alertes terminé (MVP, marquage uniquement).",
+      compteurs: { j30, j15, j7, total: j30 + j15 + j7 },
+    })
+  })
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -504,4 +777,11 @@ function getLabelTableau(code: string): string {
     T09: "Situation fiscale d'ensemble",
   }
   return labels[code] ?? code
+}
+
+function seuilAlerte(joursRestants: number): "J30" | "J15" | "J7" | null {
+  if (joursRestants <= 7) return "J7"
+  if (joursRestants <= 15) return "J15"
+  if (joursRestants <= 30) return "J30"
+  return null
 }

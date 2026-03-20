@@ -270,6 +270,29 @@ export async function authRoutes(app: FastifyInstance) {
       where: { id: user.id },
     })
 
+    const devBypassCode = process.env.DEV_VISA_BYPASS_CODE || "000000"
+    const bypassVisaDev =
+      process.env.NODE_ENV !== "production" &&
+      totpCode === devBypassCode
+
+    if (bypassVisaDev) {
+      const visaToken = app.jwt.sign(
+        { id: user.id, cabinetId: user.cabinetId, scope: "VISA_DSF" },
+        { expiresIn: "15m" }
+      )
+      await prisma.auditLog.create({
+        data: {
+          cabinetId: user.cabinetId,
+          userId:    user.id,
+          action:    "VISA_TOTP_BYPASS_DEV",
+          entite:    "utilisateurs",
+          entiteId:  user.id,
+          donneeApres: { code: "DEV_BYPASS" },
+        },
+      })
+      return reply.send({ visaToken, expiresIn: 900, bypass: true })
+    }
+
     if (!utilisateur?.totpActif || !utilisateur.totpSecret) {
       return reply.status(400).send({
         error: "L'authentification à deux facteurs n'est pas configurée. Activez-la dans vos paramètres de compte."

@@ -53,6 +53,16 @@ ivoirecompta/
 - **Paie** : `/paie` — salariés par client (CRUD), bulletins mensuels CNPS/ITS, récap CNPS. Après `npm run db:push`, colonne `poste` sur `employes` : `GET/POST/PATCH /paie/employes`, `GET /paie/synthese`, `GET /paie/periode`, `POST /paie/bulletins/generer`.
 - Après mise à jour Prisma : `npm run db:push` (depuis la racine ou `apps/api`).
 
+### Workflow DSF (MVP)
+
+- **1. Générer** : depuis `/dsf`, action **Générer DSF** sur une ligne `DSF-AAAA` (nécessite des écritures `VALIDEE`).
+- **2. Consulter** : page `/dsf/tableaux/[exerciceId]` (T07, T08, T09) + export PDF.
+- **3. Marquer prête** : `POST /declarations/:id/prete` (statut `PRETE`).
+- **4. Viser** : `POST /auth/visa/verifier` (TOTP) puis `POST /declarations/:id/viser` (statut `VISEE`).
+- **5. Déposer** : `POST /declarations/:id/deposer` avec `referenceEimpots` (statut `DEPOSEE` + échéance DSF marquée `FAITE`).
+
+> Développement local : un bypass visa est autorisé avec le code `000000` (ou `DEV_VISA_BYPASS_CODE`). Désactivé en production.
+
 **Champs côté marché CI** : le **n° d’ordre ONECCA** est le plus critique (tenant + visa DSF). Le **RCCM** est recommandé mais peut rester optionnel au MVP. **Secteur / spécialisation** servent surtout au produit (pas imposés par la DGI pour la compta).
 
 ### Clients & comptabilité (MVP)
