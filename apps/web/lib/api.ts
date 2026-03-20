@@ -186,3 +186,27 @@ export const validerClotureMensuelle = (data: {
 }) => api.post("/cloture-mensuelle/valider", data)
 export const deverrouillerClotureMensuelle = (data: { exerciceId: string; mois: number; annee: number }) =>
   api.post("/cloture-mensuelle/deverrouiller", data)
+
+/** Facturation */
+export const getFactures = (params: Record<string, string>) => api.get("/facturation", { params })
+export const createFacture = (data: {
+  clientId: string
+  dateEmission: string
+  dateEcheance: string
+  numero?: string
+  notes?: string
+  tvaTaux?: number
+  statut?: "BROUILLON" | "EMISE"
+  lignes: Array<{ description: string; quantite: number; prixUnitaireHt: number }>
+}) => api.post("/facturation", data)
+export const addPaiementFacture = (
+  factureId: string,
+  data: {
+    datePaiement: string
+    montant: number
+    modePaiement: "VIREMENT" | "CHEQUE" | "ESPECES" | "MOBILE_MONEY"
+    reference?: string
+    commentaire?: string
+  }
+) => api.post(`/facturation/${factureId}/paiements`, data)
+export const getFacturePdfData = (factureId: string) => api.get(`/facturation/${factureId}/pdf`)

@@ -59,6 +59,8 @@ model Utilisateur {
   missionsAssignees    Mission[]
   visasDsf             DeclarationFiscale[] @relation("VisaExpert")
   rapprochementsBancaires RapprochementBancaire[]
+  facturesCreees       Facture[] @relation("FactureCreePar")
+  paiementsFactures    PaiementFacture[] @relation("PaiementFactureCreePar")
 
   @@unique([cabinetId, email])
   @@map("utilisateurs")
@@ -107,6 +109,7 @@ model Client {
   dossiers          Dossier[]
   employes          Employe[]
   mouvementsBancaires MouvementBancaire[]
+  factures          Facture[]
 
   @@unique([cabinetId, ncc])
   @@map("clients")
@@ -411,6 +414,64 @@ model RapprochementBancaire {
   @@map("rapprochements_bancaires")
 }
 
+model Facture {
+  id            String   @id @default(uuid())
+  clientId      String
+  client        Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  creeParId     String?
+  creePar       Utilisateur? @relation("FactureCreePar", fields: [creeParId], references: [id], onDelete: SetNull)
+  numero        String
+  dateEmission  DateTime
+  dateEcheance  DateTime
+  statut        StatutFacture @default(BROUILLON)
+  tvaTaux       Decimal @default(18) @db.Decimal(5,2)
+  sousTotalHt   Decimal @default(0) @db.Decimal(18,0)
+  montantTva    Decimal @default(0) @db.Decimal(18,0)
+  totalTtc      Decimal @default(0) @db.Decimal(18,0)
+  montantPaye   Decimal @default(0) @db.Decimal(18,0)
+  resteAPayer   Decimal @default(0) @db.Decimal(18,0)
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  lignes        LigneFacture[]
+  paiements     PaiementFacture[]
+
+  @@unique([clientId, numero])
+  @@index([clientId, dateEmission])
+  @@map("factures")
+}
+
+model LigneFacture {
+  id             String   @id @default(uuid())
+  factureId      String
+  facture        Facture  @relation(fields: [factureId], references: [id], onDelete: Cascade)
+  description    String
+  quantite       Decimal  @default(1) @db.Decimal(10,2)
+  prixUnitaireHt Decimal  @db.Decimal(18,0)
+  totalLigneHt   Decimal  @db.Decimal(18,0)
+  ordre          Int      @default(0)
+
+  @@map("lignes_facture")
+}
+
+model PaiementFacture {
+  id              String   @id @default(uuid())
+  factureId       String
+  facture         Facture  @relation(fields: [factureId], references: [id], onDelete: Cascade)
+  creeParId       String?
+  creePar         Utilisateur? @relation("PaiementFactureCreePar", fields: [creeParId], references: [id], onDelete: SetNull)
+  datePaiement    DateTime
+  montant         Decimal  @db.Decimal(18,0)
+  modePaiement    ModePaiementFacture
+  reference       String?
+  commentaire     String?
+  createdAt       DateTime @default(now())
+
+  @@index([factureId, datePaiement])
+  @@map("paiements_facture")
+}
+
 // ─────────────────────────────────────────────
 // AUDIT LOG (immuable)
 // ─────────────────────────────────────────────
@@ -558,4 +619,19 @@ enum StatutRapprochement {
   A_VERIFIER
   RAPPROCHE
   IGNORE
+}
+
+enum StatutFacture {
+  BROUILLON
+  EMISE
+  PARTIELLEMENT_PAYEE
+  PAYEE
+  EN_RETARD
+}
+
+enum ModePaiementFacture {
+  VIREMENT
+  CHEQUE
+  ESPECES
+  MOBILE_MONEY
 }

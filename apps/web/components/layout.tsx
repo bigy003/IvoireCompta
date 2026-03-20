@@ -53,6 +53,7 @@ export default function Layout({ children }: Props) {
     { label: "BAL | GL", href: "/bal-gl" },
     { label: "Rapprochement bancaire", href: "/rapprochement-bancaire" },
     { label: "Clôture mensuelle", href: "/cloture-mensuelle" },
+    { label: "Facturation", href: "/facturation" },
     { label: "DSF & Déclarations", href: "/dsf" },
     { label: "Paie", href: "/paie" },
   ]

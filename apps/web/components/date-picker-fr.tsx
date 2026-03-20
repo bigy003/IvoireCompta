@@ -184,7 +184,7 @@ export function DatePickerFr({
           }
         >
           {selected
-            ? format(selected, "EEEE d MMMM yyyy", { locale: fr })
+            ? format(selected, "dd/MM/yyyy", { locale: fr })
             : placeholder}
         </span>
         <svg
