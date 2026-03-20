@@ -79,6 +79,7 @@ export const initialiserComptabiliteClient = (id: string) =>
 export const getDashboard = () => api.get("/dashboard")
 export const getEcheances = () => api.get("/declarations/echeances")
 export const getDeclarationsPilotage = () => api.get("/declarations/pilotage")
+export const getHistoriqueDepots = () => api.get("/declarations/historique-depots")
 export const previewAlertesEcheances = () => api.get("/declarations/notifications/preview")
 export const runAlertesEcheances = () => api.post("/declarations/notifications/run")
 export const preparerDepotEcheance = (id: string) => api.post(`/declarations/echeances/${id}/preparer`)
@@ -142,3 +143,46 @@ export const genererBulletinPaie = (data: {
 }) => api.post("/paie/bulletins/generer", data)
 export const postRecapCnps = (clientId: string, mois: number, annee: number) =>
   api.post("/paie/recap-cnps", { clientId, mois, annee })
+
+/** Rapprochement bancaire */
+export const getRapprochementBancaire = (params: Record<string, string>) =>
+  api.get("/rapprochement-bancaire", { params })
+export const importerMouvementsBancairesCsv = (data: {
+  clientId: string
+  exerciceId: string
+  rows: Array<{
+    dateOperation: string
+    libelle: string
+    reference?: string
+    debit: number
+    credit: number
+    solde?: number
+  }>
+}) => api.post("/rapprochement-bancaire/import-csv", data)
+export const autoMatchRapprochementBancaire = (data: { exerciceId: string; du?: string; au?: string }) =>
+  api.post("/rapprochement-bancaire/auto-match", data)
+export const rapprocherMouvementBancaire = (data: {
+  mouvementId: string
+  ecritureId: string
+  montant?: number
+  commentaire?: string
+}) => api.post("/rapprochement-bancaire/match", data)
+export const dissocierMouvementBancaire = (mouvementId: string) =>
+  api.post(`/rapprochement-bancaire/unmatch/${mouvementId}`)
+export const validerRapprochementMois = (data: { exerciceId: string; du: string; au: string }) =>
+  api.post("/rapprochement-bancaire/valider-mois", data)
+export const deverrouillerRapprochementMois = (data: { exerciceId: string; du: string; au: string }) =>
+  api.post("/rapprochement-bancaire/deverrouiller-mois", data)
+
+/** Clôture mensuelle */
+export const getClotureMensuelle = (params: { exerciceId: string; mois: number; annee: number }) =>
+  api.get("/cloture-mensuelle", { params })
+export const validerClotureMensuelle = (data: {
+  exerciceId: string
+  mois: number
+  annee: number
+  commentaire: string
+  confirmation: boolean
+}) => api.post("/cloture-mensuelle/valider", data)
+export const deverrouillerClotureMensuelle = (data: { exerciceId: string; mois: number; annee: number }) =>
+  api.post("/cloture-mensuelle/deverrouiller", data)

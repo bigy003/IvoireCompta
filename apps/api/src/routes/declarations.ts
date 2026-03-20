@@ -711,6 +711,98 @@ export async function declarationRoutes(app: FastifyInstance) {
       compteurs: { j30, j15, j7, total: j30 + j15 + j7 },
     })
   })
+
+  /**
+   * GET /declarations/historique-depots
+   * Timeline dépôts DSF + e-impôts (MVP)
+   */
+  app.get("/historique-depots", async (request, reply) => {
+    const user = request.user as { cabinetId: string }
+    const clients = await prisma.client.findMany({
+      where: { cabinetId: user.cabinetId },
+      select: { id: true, nomRaisonSociale: true, ncc: true },
+    })
+    const clientIds = clients.map(c => c.id)
+    const clientParId = Object.fromEntries(clients.map(c => [c.id, c]))
+
+    const [decls, eches] = await Promise.all([
+      prisma.declarationFiscale.findMany({
+        where: {
+          typeDeclaration: "DSF_ANNUELLE",
+          exercice: { dossier: { clientId: { in: clientIds } } },
+          OR: [
+            { statut: { in: ["PRETE", "VISEE", "DEPOSEE", "ACCEPTEE", "REJETEE"] } },
+            { dateVisa: { not: null } },
+            { dateDepot: { not: null } },
+          ],
+        },
+        select: {
+          id: true,
+          statut: true,
+          periodeAnnee: true,
+          referenceEimpots: true,
+          dateVisa: true,
+          dateDepot: true,
+          updatedAt: true,
+          exercice: { select: { dossier: { select: { clientId: true } } } },
+        },
+      }),
+      prisma.echeanceFiscale.findMany({
+        where: {
+          clientId: { in: clientIds },
+          typeDeclaration: { not: "DSF_ANNUELLE" },
+          OR: [{ statut: "EN_COURS" }, { statut: "FAITE" }, { dateDepot: { not: null } }],
+        },
+        select: {
+          id: true,
+          clientId: true,
+          typeDeclaration: true,
+          periodeLabel: true,
+          statut: true,
+          referenceDepot: true,
+          dateDepot: true,
+          dateEcheance: true,
+          createdAt: true,
+        },
+      }),
+    ])
+
+    const timeline = [
+      ...decls.map(d => {
+        const client = clientParId[d.exercice.dossier.clientId]
+        return {
+          id: `dsf-${d.id}`,
+          famille: "DSF" as const,
+          clientNom: client?.nomRaisonSociale ?? "—",
+          clientNcc: client?.ncc ?? "—",
+          typeDeclaration: "DSF_ANNUELLE",
+          periodeLabel: `DSF-${d.periodeAnnee}`,
+          statut: d.statut,
+          reference: d.referenceEimpots ?? null,
+          dateEvenement: d.dateDepot ?? d.dateVisa ?? d.updatedAt,
+          details: d.dateDepot
+            ? "Déposée"
+            : d.dateVisa
+              ? "Visée"
+              : "Prête / en cours",
+        }
+      }),
+      ...eches.map(e => ({
+        id: `ech-${e.id}`,
+        famille: "EIMPOTS" as const,
+        clientNom: clientParId[e.clientId]?.nomRaisonSociale ?? "—",
+        clientNcc: clientParId[e.clientId]?.ncc ?? "—",
+        typeDeclaration: e.typeDeclaration,
+        periodeLabel: e.periodeLabel,
+        statut: e.statut,
+        reference: e.referenceDepot ?? null,
+        dateEvenement: e.dateDepot ?? e.dateEcheance ?? e.createdAt,
+        details: e.statut === "FAITE" ? "Déclarée / déposée" : "Préparation en cours",
+      })),
+    ].sort((a, b) => new Date(b.dateEvenement).getTime() - new Date(a.dateEvenement).getTime())
+
+    return reply.send({ total: timeline.length, timeline })
+  })
 }
 
 // ── Helpers ────────────────────────────────────────────────────────

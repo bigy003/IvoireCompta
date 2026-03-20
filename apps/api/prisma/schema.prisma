@@ -58,6 +58,7 @@ model Utilisateur {
   ecrituresSaisies     Ecriture[]
   missionsAssignees    Mission[]
   visasDsf             DeclarationFiscale[] @relation("VisaExpert")
+  rapprochementsBancaires RapprochementBancaire[]
 
   @@unique([cabinetId, email])
   @@map("utilisateurs")
@@ -105,6 +106,7 @@ model Client {
 
   dossiers          Dossier[]
   employes          Employe[]
+  mouvementsBancaires MouvementBancaire[]
 
   @@unique([cabinetId, ncc])
   @@map("clients")
@@ -146,6 +148,7 @@ model Exercice {
   ecritures           Ecriture[]
   declarationsFiscales DeclarationFiscale[]
   journaux            Journal[]
+  mouvementsBancaires MouvementBancaire[]
 
   @@unique([dossierId, annee])
   @@map("exercices")
@@ -189,6 +192,7 @@ model Ecriture {
   updatedAt       DateTime @updatedAt
 
   lignes          LigneEcriture[]
+  rapprochementsBancaires RapprochementBancaire[]
 
   @@map("ecritures")
 }
@@ -365,6 +369,48 @@ model EcheanceFiscale {
   @@map("echeances_fiscales")
 }
 
+model MouvementBancaire {
+  id            String   @id @default(uuid())
+  clientId      String
+  client        Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  exerciceId    String
+  exercice      Exercice @relation(fields: [exerciceId], references: [id], onDelete: Cascade)
+  dateOperation DateTime
+  libelle       String
+  reference     String?
+  debit         Decimal  @default(0) @db.Decimal(18,0)
+  credit        Decimal  @default(0) @db.Decimal(18,0)
+  solde         Decimal? @db.Decimal(18,0)
+  statut        StatutRapprochement @default(NON_RAPPROCHE)
+  source        String?
+  importeLe     DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  rapprochements RapprochementBancaire[]
+
+  @@index([clientId, exerciceId, dateOperation])
+  @@map("mouvements_bancaires")
+}
+
+model RapprochementBancaire {
+  id               String   @id @default(uuid())
+  mouvementId      String
+  mouvement        MouvementBancaire @relation(fields: [mouvementId], references: [id], onDelete: Cascade)
+  ecritureId       String
+  ecriture         Ecriture @relation(fields: [ecritureId], references: [id], onDelete: Cascade)
+  creeParId        String?
+  creePar          Utilisateur? @relation(fields: [creeParId], references: [id], onDelete: SetNull)
+  montantRapproche Decimal  @db.Decimal(18,0)
+  commentaire      String?
+  statut           StatutRapprochement @default(RAPPROCHE)
+  rapprocheLe      DateTime @default(now())
+
+  @@index([mouvementId])
+  @@index([ecritureId])
+  @@map("rapprochements_bancaires")
+}
+
 // ─────────────────────────────────────────────
 // AUDIT LOG (immuable)
 // ─────────────────────────────────────────────
@@ -505,4 +551,11 @@ enum TypeDocument {
   CONTRAT
   RAPPORT_AUDIT
   AUTRE
+}
+
+enum StatutRapprochement {
+  NON_RAPPROCHE
+  A_VERIFIER
+  RAPPROCHE
+  IGNORE
 }

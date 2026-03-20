@@ -12,6 +12,7 @@ import {
   api,
   preparerDepotEcheance,
   deposerEcheance,
+  getHistoriqueDepots,
 } from "@/lib/api"
 
 const TYPE_LABEL: Record<string, string> = {
@@ -55,6 +56,18 @@ type Ligne = {
   uiStatut: "DEPOSEE" | "EN_RETARD" | "URGENT" | "A_FAIRE"
   exerciceId: string | null
 }
+type TimelineItem = {
+  id: string
+  famille: "DSF" | "EIMPOTS"
+  clientNom: string
+  clientNcc: string
+  typeDeclaration: string
+  periodeLabel: string
+  statut: string
+  reference: string | null
+  dateEvenement: string
+  details: string
+}
 
 function initiales(nom: string) {
   const p = nom.trim().split(/\s+/)
@@ -94,6 +107,10 @@ export default function DsfPage() {
   const [exercicesOpts, setExercicesOpts] = useState<{ id: string; label: string }[]>([])
   const [selClient, setSelClient] = useState("")
   const [selExercice, setSelExercice] = useState("")
+  const [timeline, setTimeline] = useState<TimelineItem[]>([])
+  const [timelineFamille, setTimelineFamille] = useState<"" | "DSF" | "EIMPOTS">("")
+  const [timelineClient, setTimelineClient] = useState("")
+  const [timelineSearch, setTimelineSearch] = useState("")
 
   async function load() {
     setLoading(true)
@@ -102,6 +119,8 @@ export default function DsfPage() {
       const r = await getDeclarationsPilotage()
       setKpis(r.data.kpis ?? { aFaire: 0, urgentes: 0, deposees: 0 })
       setLignes(r.data.lignes ?? [])
+      const h = await getHistoriqueDepots()
+      setTimeline((h.data?.timeline ?? []) as TimelineItem[])
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string }; status?: number } })?.response?.data?.error
       const st = (e as { response?: { status?: number } })?.response?.status
@@ -141,6 +160,29 @@ export default function DsfPage() {
     if (filterStatut) list = list.filter(l => l.uiStatut === filterStatut)
     return list
   }, [lignes, search, filterType, filterStatut])
+
+  const timelineFiltered = useMemo(() => {
+    let list = timeline
+    if (timelineFamille) list = list.filter(t => t.famille === timelineFamille)
+    if (timelineClient) list = list.filter(t => t.clientNom.toLowerCase() === timelineClient.toLowerCase())
+    const q = timelineSearch.trim().toLowerCase()
+    if (q) {
+      list = list.filter(
+        t =>
+          t.clientNom.toLowerCase().includes(q) ||
+          t.clientNcc.toLowerCase().includes(q) ||
+          t.periodeLabel.toLowerCase().includes(q) ||
+          (TYPE_LABEL[t.typeDeclaration] ?? t.typeDeclaration).toLowerCase().includes(q) ||
+          (t.reference ?? "").toLowerCase().includes(q)
+      )
+    }
+    return list
+  }, [timeline, timelineFamille, timelineClient, timelineSearch])
+
+  const timelineClients = useMemo(
+    () => Array.from(new Set(timeline.map(t => t.clientNom))).sort((a, b) => a.localeCompare(b)),
+    [timeline]
+  )
 
   async function openModalGlobal() {
     setSelClient("")
@@ -510,6 +552,84 @@ export default function DsfPage() {
                 </tbody>
               </table>
             </div>
+          )}
+        </div>
+
+        <div className="mt-8 bg-white/95 backdrop-blur rounded-2xl shadow-md border border-gray-100/80 overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+            <h2 className="font-bold text-gray-900">Historique des dépôts</h2>
+            <span className="text-xs text-gray-500">{timelineFiltered.length} / {timeline.length} événement(s)</span>
+          </div>
+          <div className="px-5 py-3 border-b border-gray-100 bg-gray-50/40 flex flex-col lg:flex-row gap-2 lg:items-center">
+            <input
+              type="search"
+              value={timelineSearch}
+              onChange={e => setTimelineSearch(e.target.value)}
+              placeholder="Rechercher (client, NCC, période, référence)…"
+              className="w-full lg:flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm bg-white"
+            />
+            <div className="flex flex-wrap gap-2">
+              <select
+                value={timelineFamille}
+                onChange={e => setTimelineFamille(e.target.value as "" | "DSF" | "EIMPOTS")}
+                className="rounded-lg border border-gray-200 px-3 py-2 text-sm bg-white min-w-[130px]"
+              >
+                <option value="">Famille (toutes)</option>
+                <option value="DSF">DSF</option>
+                <option value="EIMPOTS">e-impôts</option>
+              </select>
+              <select
+                value={timelineClient}
+                onChange={e => setTimelineClient(e.target.value)}
+                className="rounded-lg border border-gray-200 px-3 py-2 text-sm bg-white min-w-[180px]"
+              >
+                <option value="">Client (tous)</option>
+                {timelineClients.map(n => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {timelineFiltered.length === 0 ? (
+            <p className="px-5 py-10 text-sm text-gray-500 text-center">
+              {timeline.length === 0
+                ? "Aucun dépôt enregistré pour le moment (DSF ou e-impôts)."
+                : "Aucun événement ne correspond aux filtres."}
+            </p>
+          ) : (
+            <ul className="divide-y divide-gray-50">
+              {timelineFiltered.slice(0, 25).map(t => (
+                <li key={t.id} className="px-5 py-4 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span
+                        className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                          t.famille === "DSF"
+                            ? "bg-orange-100 text-orange-800"
+                            : "bg-blue-100 text-blue-800"
+                        }`}
+                      >
+                        {t.famille === "DSF" ? "DSF" : "e-impôts"}
+                      </span>
+                      <span className="font-semibold text-gray-900">{t.clientNom}</span>
+                      <span className="text-xs text-gray-400 font-mono">{t.clientNcc}</span>
+                    </div>
+                    <p className="text-sm text-gray-700 mt-0.5">
+                      {TYPE_LABEL[t.typeDeclaration] ?? t.typeDeclaration} · {t.periodeLabel}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {t.details} · Statut {t.statut}
+                      {t.reference ? ` · Réf ${t.reference}` : ""}
+                    </p>
+                  </div>
+                  <div className="text-xs text-gray-500 whitespace-nowrap">
+                    {fmtDate(t.dateEvenement)}
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       </div>

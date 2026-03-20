@@ -50,9 +50,11 @@ export default function Layout({ children }: Props) {
     { label: "Tableau de Bord", href: "/dashboard" },
     { label: "Clients", href: "/clients" },
     { label: "Écritures", href: "/ecritures" },
+    { label: "BAL | GL", href: "/bal-gl" },
+    { label: "Rapprochement bancaire", href: "/rapprochement-bancaire" },
+    { label: "Clôture mensuelle", href: "/cloture-mensuelle" },
     { label: "DSF & Déclarations", href: "/dsf" },
     { label: "Paie", href: "/paie" },
-    { label: "Paramètres", href: "/parametres" },
   ]
 
   return (
@@ -79,7 +81,8 @@ export default function Layout({ children }: Props) {
               </span>
             </div>
 
-            <nav className="flex items-center gap-1">
+            <nav className="flex-1 min-w-0 mx-4 overflow-x-auto whitespace-nowrap hide-scrollbar">
+              <div className="inline-flex items-center gap-1 min-w-max">
               {navItems.map(item => (
                 <button
                   key={item.href}
@@ -96,6 +99,7 @@ export default function Layout({ children }: Props) {
                   )}
                 </button>
               ))}
+              </div>
             </nav>
 
             <div className="flex items-center gap-3">

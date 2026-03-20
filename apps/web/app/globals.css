@@ -24,6 +24,15 @@ body {
   .text-balance {
     text-wrap: balance;
   }
+
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* Calendrier IvoireCompta (react-day-picker) */

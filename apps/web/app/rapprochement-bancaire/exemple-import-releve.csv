@@ -1,0 +1,6 @@
+date;libelle;debit;credit;solde;reference
+31/01/2026;Virement recu Client ABC;0;1500000;1500000;VIR-CA-24001
+31/01/2026;Paiement fournisseur SGCI;500000;0;1000000;FAC-FOUR-001
+01/02/2026;Frais bancaires mensuels;15000;0;985000;FRAIS-2026-02
+02/02/2026;Encaissement caisse;0;250000;1235000;ENC-CAISSE-002
+03/02/2026;Reglement loyer;300000;0;935000;LOYER-02-2026
