@@ -150,8 +150,8 @@ export async function facturationRoutes(app: FastifyInstance) {
     })
     if (!devis) return reply.status(404).send({ error: "Devis introuvable" })
     if (devis.convertiEnFactureId) return reply.status(409).send({ error: "Ce devis est déjà converti en facture." })
-    if (devis.statut !== "ACCEPTE" && devis.statut !== "ENVOYE") {
-      return reply.status(409).send({ error: "Seuls les devis envoyés/acceptés peuvent être convertis." })
+    if (devis.statut !== "ACCEPTE") {
+      return reply.status(409).send({ error: "Seuls les devis acceptés peuvent être convertis." })
     }
 
     const prefix = `${new Date().getFullYear()}-`
@@ -199,6 +199,25 @@ export async function facturationRoutes(app: FastifyInstance) {
     })
 
     return reply.status(201).send({ factureId: facture.id })
+  })
+
+  app.post("/devis/:id/statut", async (request, reply) => {
+    const user = request.user as { cabinetId: string }
+    const { id } = request.params as { id: string }
+    const body = request.body as { statut?: "ACCEPTE" | "REFUSE" | "ENVOYE" | "BROUILLON" }
+    if (!body.statut) return reply.status(400).send({ error: "statut requis" })
+
+    const devis = await prisma.devis.findFirst({
+      where: { id, client: { cabinetId: user.cabinetId } },
+    })
+    if (!devis) return reply.status(404).send({ error: "Devis introuvable" })
+    if (devis.statut === "CONVERTI") return reply.status(409).send({ error: "Devis déjà converti, statut non modifiable." })
+
+    const updated = await prisma.devis.update({
+      where: { id },
+      data: { statut: body.statut },
+    })
+    return reply.send({ devis: { id: updated.id, statut: updated.statut } })
   })
 
   app.get("/relances/preview", async (request, reply) => {

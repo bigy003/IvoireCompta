@@ -187,6 +187,14 @@ export const validerClotureMensuelle = (data: {
 export const deverrouillerClotureMensuelle = (data: { exerciceId: string; mois: number; annee: number }) =>
   api.post("/cloture-mensuelle/deverrouiller", data)
 
+/** TVA */
+export const getTvaMensuelle = (params: { exerciceId: string; mois: number; annee: number }) =>
+  api.get("/tva", { params })
+export const validerTvaMensuelle = (data: { exerciceId: string; mois: number; annee: number }) =>
+  api.post("/tva/valider", data)
+export const deverrouillerTvaMensuelle = (data: { exerciceId: string; mois: number; annee: number }) =>
+  api.post("/tva/deverrouiller", data)
+
 /** Facturation */
 export const getFactures = (params: Record<string, string>) => api.get("/facturation", { params })
 export const createFacture = (data: {
@@ -229,3 +237,7 @@ export const createDevis = (data: {
 }) => api.post("/facturation/devis", data)
 export const convertirDevisEnFacture = (devisId: string) =>
   api.post(`/facturation/devis/${devisId}/convertir`)
+export const setStatutDevis = (
+  devisId: string,
+  statut: "ACCEPTE" | "REFUSE" | "ENVOYE" | "BROUILLON"
+) => api.post(`/facturation/devis/${devisId}/statut`, { statut })

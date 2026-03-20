@@ -54,6 +54,7 @@ export default function Layout({ children }: Props) {
     { label: "Rapprochement bancaire", href: "/rapprochement-bancaire" },
     { label: "Clôture mensuelle", href: "/cloture-mensuelle" },
     { label: "Facturation", href: "/facturation" },
+    { label: "TVA", href: "/tva" },
     { label: "DSF & Déclarations", href: "/dsf" },
     { label: "Paie", href: "/paie" },
   ]

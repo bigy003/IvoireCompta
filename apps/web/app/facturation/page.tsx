@@ -16,6 +16,7 @@ import {
   getFactures,
   previewRelancesFactures,
   runRelancesFactures,
+  setStatutDevis,
 } from "@/lib/api"
 
 type Client = { id: string; nomRaisonSociale: string }
@@ -33,7 +34,7 @@ type Facture = {
   resteAPayer: string
   notes?: string | null
   client: { id: string; nomRaisonSociale: string }
-  lignes: Array<{ description: string; quantite: string; prixUnitaireHt: string; totalLigneHt: string }>
+  lignes?: Array<{ description: string; quantite: string; prixUnitaireHt: string; totalLigneHt: string }>
 }
 type Relance = {
   factureId: string
@@ -52,8 +53,13 @@ type Devis = {
   dateEmission: string
   dateValidite: string
   statut: "BROUILLON" | "ENVOYE" | "ACCEPTE" | "REFUSE" | "EXPIRE" | "CONVERTI"
+  tvaTaux?: string
+  sousTotalHt?: string
+  montantTva?: string
   totalTtc: string
+  notes?: string | null
   client: { id: string; nomRaisonSociale: string }
+  lignes: Array<{ description: string; quantite: string; prixUnitaireHt: string; totalLigneHt: string }>
 }
 
 function n(v: string | number) {
@@ -99,6 +105,8 @@ export default function FacturationPage() {
   const [relances, setRelances] = useState<Relance[]>([])
   const [devis, setDevis] = useState<Devis[]>([])
   const [selectedDevisId, setSelectedDevisId] = useState("")
+  const selectedDevis = useMemo(() => devis.find(d => d.id === selectedDevisId) ?? null, [devis, selectedDevisId])
+  const [printMode, setPrintMode] = useState<"facture" | "devis" | null>(null)
   const [createForm, setCreateForm] = useState({
     clientId: "",
     dateEmission: ymd(new Date()),
@@ -492,22 +500,68 @@ export default function FacturationPage() {
             </table>
           </div>
           <div className="px-4 py-3 border-t border-gray-100">
-            <button
-              className="px-3 py-2 rounded-lg bg-orange-500 text-white text-sm font-semibold disabled:opacity-60"
-              disabled={!selectedDevisId}
-              onClick={async () => {
-                try {
-                  await convertirDevisEnFacture(selectedDevisId)
-                  setOk("Devis converti en facture.")
-                  await actualiser()
-                } catch (e: unknown) {
-                  const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-                  setErr(msg || "Échec de conversion du devis.")
-                }
-              }}
-            >
-              Convertir en facture
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-sm font-semibold disabled:opacity-60"
+                disabled={!selectedDevisId}
+                onClick={async () => {
+                  try {
+                    await setStatutDevis(selectedDevisId, "ACCEPTE")
+                    setOk("Devis marqué accepté.")
+                    await actualiser()
+                  } catch (e: unknown) {
+                    const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                    setErr(msg || "Échec mise à jour du devis.")
+                  }
+                }}
+              >
+                Accepter devis
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm font-semibold disabled:opacity-60"
+                disabled={!selectedDevisId}
+                onClick={async () => {
+                  try {
+                    await setStatutDevis(selectedDevisId, "REFUSE")
+                    setOk("Devis marqué refusé.")
+                    await actualiser()
+                  } catch (e: unknown) {
+                    const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                    setErr(msg || "Échec mise à jour du devis.")
+                  }
+                }}
+              >
+                Refuser devis
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg bg-orange-500 text-white text-sm font-semibold disabled:opacity-60"
+                disabled={!selectedDevisId}
+                onClick={async () => {
+                  try {
+                    await convertirDevisEnFacture(selectedDevisId)
+                    setOk("Devis converti en facture.")
+                    await actualiser()
+                  } catch (e: unknown) {
+                    const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                    setErr(msg || "Échec de conversion du devis.")
+                  }
+                }}
+              >
+                Convertir en facture
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg border border-gray-200 text-sm font-semibold disabled:opacity-60"
+                disabled={!selectedDevis}
+                onClick={() => {
+                  if (!selectedDevis) return
+                  setPrintMode("devis")
+                  document.title = `DEVIS_${selectedDevis.numero}`
+                  window.print()
+                }}
+              >
+                Exporter PDF devis
+              </button>
+            </div>
           </div>
         </div>
 
@@ -642,6 +696,7 @@ export default function FacturationPage() {
                   <button
                     className="px-3 py-2 rounded-lg border border-gray-200 text-xs font-semibold"
                     onClick={() => {
+                      setPrintMode("facture")
                       document.title = `FACTURE_${selected.numero}`
                       window.print()
                     }}
@@ -655,12 +710,31 @@ export default function FacturationPage() {
           </aside>
         </div>
 
-        {selected && (
+        {selected && printMode === "facture" && (
           <div className="hidden print:block mt-4">
-            <h2 className="text-2xl font-bold text-gray-900 mb-1">Facture {selected.numero}</h2>
-            <p className="text-sm text-gray-600 mb-4">
-              Client: {selected.client.nomRaisonSociale} · Émission: {fmtDate(selected.dateEmission)} · Échéance: {fmtDate(selected.dateEcheance)}
-            </p>
+            <div className="flex items-start justify-between gap-6 mb-5 pb-4 border-b border-gray-200">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">FACTURE</h2>
+                <p className="text-sm text-gray-600 mt-1">IvoireCompta</p>
+                <p className="text-xs text-gray-500">Cabinet d&apos;expertise comptable</p>
+                <p className="text-xs text-gray-500 mt-1">Abidjan - Cote d&apos;Ivoire</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm font-semibold text-gray-900">N° {selected.numero}</p>
+                <p className="text-xs text-gray-600 mt-1">Date émission: {fmtDate(selected.dateEmission)}</p>
+                <p className="text-xs text-gray-600">Date échéance: {fmtDate(selected.dateEcheance)}</p>
+                <p className="text-xs mt-1">
+                  <span className="font-semibold text-gray-700">Statut:</span>{" "}
+                  <span className="text-gray-900">{selected.statut}</span>
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-gray-200 p-3 mb-4">
+              <p className="text-xs uppercase tracking-wide text-gray-500">Client</p>
+              <p className="text-sm font-semibold text-gray-900 mt-1">{selected.client.nomRaisonSociale}</p>
+            </div>
+
             <table className="w-full text-sm border-separate [border-spacing:0]">
               <thead>
                 <tr className="text-xs uppercase text-gray-500 border-b border-gray-200">
@@ -703,6 +777,104 @@ export default function FacturationPage() {
                 </tr>
               </tfoot>
             </table>
+
+            <div className="grid grid-cols-2 gap-6 mt-6 text-xs text-gray-700">
+              <div className="rounded-xl border border-gray-200 p-3">
+                <p className="font-semibold text-gray-900 mb-1">Conditions de règlement</p>
+                <p>Échéance: {fmtDate(selected.dateEcheance)}.</p>
+                <p>Tout retard de paiement peut entraîner des pénalités selon la réglementation en vigueur.</p>
+              </div>
+              <div className="rounded-xl border border-gray-200 p-3">
+                <p className="font-semibold text-gray-900 mb-1">Cachet et signature</p>
+                <p>Zone réservée à la validation du client.</p>
+                <div className="h-14 border-b border-dashed border-gray-300 mt-4" />
+              </div>
+            </div>
+
+            <div className="mt-6 pt-3 border-t border-gray-200 text-[11px] text-gray-500">
+              <p>Document généré par IvoireCompta.</p>
+              <p>Merci pour votre confiance.</p>
+            </div>
+          </div>
+        )}
+
+        {selectedDevis && printMode === "devis" && (
+          <div className="hidden print:block mt-4">
+            <div className="flex items-start justify-between gap-6 mb-5 pb-4 border-b border-gray-200">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">DEVIS</h2>
+                <p className="text-sm text-gray-600 mt-1">IvoireCompta</p>
+                <p className="text-xs text-gray-500">Cabinet d&apos;expertise comptable</p>
+                <p className="text-xs text-gray-500 mt-1">Abidjan - Cote d&apos;Ivoire</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm font-semibold text-gray-900">N° {selectedDevis.numero}</p>
+                <p className="text-xs text-gray-600 mt-1">Date émission: {fmtDate(selectedDevis.dateEmission)}</p>
+                <p className="text-xs text-gray-600">Date validité: {fmtDate(selectedDevis.dateValidite)}</p>
+                <p className="text-xs mt-1">
+                  <span className="font-semibold text-gray-700">Statut:</span>{" "}
+                  <span className="text-gray-900">{selectedDevis.statut}</span>
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-gray-200 p-3 mb-4">
+              <p className="text-xs uppercase tracking-wide text-gray-500">Client</p>
+              <p className="text-sm font-semibold text-gray-900 mt-1">{selectedDevis.client.nomRaisonSociale}</p>
+            </div>
+
+            <table className="w-full text-sm border-separate [border-spacing:0]">
+              <thead>
+                <tr className="text-xs uppercase text-gray-500 border-b border-gray-200">
+                  <th className="text-left py-2 px-2">Description</th>
+                  <th className="text-right py-2 px-2">Qté</th>
+                  <th className="text-right py-2 px-2">PU HT</th>
+                  <th className="text-right py-2 px-2">Total HT</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(selectedDevis.lignes ?? []).map((l, i) => (
+                  <tr key={`print-dl-${i}`} className="border-b border-gray-100">
+                    <td className="py-2 px-2">{l.description}</td>
+                    <td className="py-2 px-2 text-right">{l.quantite}</td>
+                    <td className="py-2 px-2 text-right">{fcfa(n(l.prixUnitaireHt))}</td>
+                    <td className="py-2 px-2 text-right">{fcfa(n(l.totalLigneHt))}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="font-semibold">
+                  <td className="py-2 px-2" colSpan={3}>Sous-total HT</td>
+                  <td className="py-2 px-2 text-right">{fcfa(n(selectedDevis.sousTotalHt ?? "0"))}</td>
+                </tr>
+                <tr className="font-semibold">
+                  <td className="py-2 px-2" colSpan={3}>TVA ({Number(selectedDevis.tvaTaux ?? "18")}%)</td>
+                  <td className="py-2 px-2 text-right">{fcfa(n(selectedDevis.montantTva ?? "0"))}</td>
+                </tr>
+                <tr className="font-bold">
+                  <td className="py-2 px-2" colSpan={3}>Total TTC</td>
+                  <td className="py-2 px-2 text-right">{fcfa(n(selectedDevis.totalTtc))}</td>
+                </tr>
+              </tfoot>
+            </table>
+
+            <div className="grid grid-cols-2 gap-6 mt-6 text-xs text-gray-700">
+              <div className="rounded-xl border border-gray-200 p-3">
+                <p className="font-semibold text-gray-900 mb-1">Conditions</p>
+                <p>Validité du devis: jusqu&apos;au {fmtDate(selectedDevis.dateValidite)}.</p>
+                <p>Règlement: selon les modalités convenues entre les parties.</p>
+              </div>
+              <div className="rounded-xl border border-gray-200 p-3">
+                <p className="font-semibold text-gray-900 mb-1">Signature client</p>
+                <p>Nom, date et signature précédés de la mention &quot;Bon pour accord&quot;.</p>
+                <div className="h-14 border-b border-dashed border-gray-300 mt-4" />
+              </div>
+            </div>
+
+            <div className="mt-6 pt-3 border-t border-gray-200 text-[11px] text-gray-500">
+              <p>Document généré par IvoireCompta.</p>
+              <p>Ce devis n&apos;est pas une facture tant qu&apos;il n&apos;est pas accepté puis converti.</p>
+            </div>
           </div>
         )}
       </div>

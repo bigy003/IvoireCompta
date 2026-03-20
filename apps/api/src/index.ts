@@ -19,6 +19,7 @@ import { journauxRoutes }    from "./routes/journaux"
 import { rapprochementRoutes } from "./routes/rapprochement"
 import { clotureMensuelleRoutes } from "./routes/cloture-mensuelle"
 import { facturationRoutes } from "./routes/facturation"
+import { tvaRoutes } from "./routes/tva"
 
 const app = Fastify({
   logger: {
@@ -62,6 +63,7 @@ await app.register(journauxRoutes,    { prefix: "/journaux" })
 await app.register(rapprochementRoutes, { prefix: "/rapprochement-bancaire" })
 await app.register(clotureMensuelleRoutes, { prefix: "/cloture-mensuelle" })
 await app.register(facturationRoutes, { prefix: "/facturation" })
+await app.register(tvaRoutes, { prefix: "/tva" })
 
 app.get("/health", async () => ({ status: "ok", version: "0.1.0", app: "IvoireCompta API" }))
 
