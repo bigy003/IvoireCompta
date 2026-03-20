@@ -5,7 +5,18 @@ import { useRouter } from "next/navigation"
 import Cookies from "js-cookie"
 import Layout from "@/components/layout"
 import { DatePickerFr } from "@/components/date-picker-fr"
-import { addPaiementFacture, api, createFacture, getClients, getFactures } from "@/lib/api"
+import {
+  addPaiementFacture,
+  api,
+  createFacture,
+  createDevis,
+  convertirDevisEnFacture,
+  getDevis,
+  getClients,
+  getFactures,
+  previewRelancesFactures,
+  runRelancesFactures,
+} from "@/lib/api"
 
 type Client = { id: string; nomRaisonSociale: string }
 type Facture = {
@@ -23,6 +34,26 @@ type Facture = {
   notes?: string | null
   client: { id: string; nomRaisonSociale: string }
   lignes: Array<{ description: string; quantite: string; prixUnitaireHt: string; totalLigneHt: string }>
+}
+type Relance = {
+  factureId: string
+  numero: string
+  clientId: string
+  client: string
+  dateEcheance: string
+  resteAPayer: string
+  retardJours: number
+  canalSuggere: "EMAIL" | "WHATSAPP" | "MANUEL"
+  message: string
+}
+type Devis = {
+  id: string
+  numero: string
+  dateEmission: string
+  dateValidite: string
+  statut: "BROUILLON" | "ENVOYE" | "ACCEPTE" | "REFUSE" | "EXPIRE" | "CONVERTI"
+  totalTtc: string
+  client: { id: string; nomRaisonSociale: string }
 }
 
 function n(v: string | number) {
@@ -63,10 +94,23 @@ export default function FacturationPage() {
   const [kpi, setKpi] = useState({ caMois: "0", facturesEmises: 0, impayes: "0", tauxEncaissement: 0 })
 
   const [showCreate, setShowCreate] = useState(false)
+  const [showCreateDevis, setShowCreateDevis] = useState(false)
+  const [showRelances, setShowRelances] = useState(false)
+  const [relances, setRelances] = useState<Relance[]>([])
+  const [devis, setDevis] = useState<Devis[]>([])
+  const [selectedDevisId, setSelectedDevisId] = useState("")
   const [createForm, setCreateForm] = useState({
     clientId: "",
     dateEmission: ymd(new Date()),
     dateEcheance: ymd(new Date()),
+    notes: "",
+    tvaTaux: "18",
+    lignes: [{ description: "", quantite: "1", prixUnitaireHt: "0" }],
+  })
+  const [createDevisForm, setCreateDevisForm] = useState({
+    clientId: "",
+    dateEmission: ymd(new Date()),
+    dateValidite: ymd(new Date()),
     notes: "",
     tvaTaux: "18",
     lignes: [{ description: "", quantite: "1", prixUnitaireHt: "0" }],
@@ -83,13 +127,20 @@ export default function FacturationPage() {
   )
   const createTotalTtc = createSousTotalHt + createMontantTva
 
+  async function chargerRelances() {
+    const r = await previewRelancesFactures(clientId ? { clientId } : undefined)
+    setRelances((r.data.relances ?? []) as Relance[])
+  }
+
   async function actualiser() {
     setLoading(true)
     setErr("")
     setOk("")
     try {
       const r = await getFactures({ clientId, statut, du, au, search })
+      const rd = await getDevis({ clientId, statut: "TOUS", du, au, search })
       setFactures((r.data.factures ?? []) as Facture[])
+      setDevis((rd.data.devis ?? []) as Devis[])
       setKpi(r.data.kpi ?? kpi)
       if (!selectedId && r.data.factures?.[0]?.id) setSelectedId(r.data.factures[0].id)
       setOk("Facturation actualisée.")
@@ -103,6 +154,25 @@ export default function FacturationPage() {
   async function onCreateFacture(statutFacture: "BROUILLON" | "EMISE") {
     try {
       setErr("")
+      const lignesValides = createForm.lignes
+        .map(l => ({
+          description: l.description.trim(),
+          quantite: Number(l.quantite),
+          prixUnitaireHt: Number(l.prixUnitaireHt),
+        }))
+        .filter(
+          l =>
+            l.description.length > 0 &&
+            Number.isFinite(l.quantite) &&
+            l.quantite > 0 &&
+            Number.isFinite(l.prixUnitaireHt) &&
+            l.prixUnitaireHt >= 0
+        )
+
+      if (lignesValides.length === 0) {
+        setErr("Ajoute au moins une ligne de facture valide.")
+        return
+      }
       const payload = {
         clientId: createForm.clientId,
         dateEmission: createForm.dateEmission,
@@ -110,16 +180,12 @@ export default function FacturationPage() {
         notes: createForm.notes || undefined,
         tvaTaux: Number(createForm.tvaTaux),
         statut: statutFacture,
-        lignes: createForm.lignes.map(l => ({
-          description: l.description,
-          quantite: Number(l.quantite),
-          prixUnitaireHt: Number(l.prixUnitaireHt),
-        })),
+        lignes: lignesValides,
       }
       await createFacture(payload)
       setShowCreate(false)
       setCreateForm({
-        clientId: "",
+        clientId: createForm.clientId || clientId || "",
         dateEmission: ymd(new Date()),
         dateEcheance: ymd(new Date()),
         notes: "",
@@ -129,8 +195,53 @@ export default function FacturationPage() {
       setOk(statutFacture === "BROUILLON" ? "Facture enregistrée en brouillon." : "Facture émise.")
       await actualiser()
     } catch (e: unknown) {
+      const status = (e as { response?: { status?: number } })?.response?.status
+      const data = (e as { response?: { data?: { error?: string; erreurs?: unknown } } })?.response?.data
+      if (status === 404) {
+        setErr("Endpoint facturation introuvable (API non redémarrée ?). Redémarre l’API puis réessaie.")
+        return
+      }
+      if (data?.error) {
+        setErr(data.error)
+        return
+      }
+      if (data?.erreurs) {
+        const er = data.erreurs as Record<string, unknown>
+        const joined = Object.values(er)
+          .flatMap(v => (Array.isArray(v) ? v.map(String) : [String(v)]))
+          .join(" · ")
+        setErr(joined || "Données invalides pour la facture.")
+        return
+      }
+      setErr("Échec de création de facture.")
+    }
+  }
+
+  async function onCreateDevis(statutDevis: "BROUILLON" | "ENVOYE") {
+    try {
+      setErr("")
+      const lignesValides = createDevisForm.lignes
+        .map(l => ({ description: l.description.trim(), quantite: Number(l.quantite), prixUnitaireHt: Number(l.prixUnitaireHt) }))
+        .filter(l => l.description && l.quantite > 0 && l.prixUnitaireHt >= 0)
+      if (lignesValides.length === 0) {
+        setErr("Ajoute au moins une ligne de devis valide.")
+        return
+      }
+      await createDevis({
+        clientId: createDevisForm.clientId,
+        dateEmission: createDevisForm.dateEmission,
+        dateValidite: createDevisForm.dateValidite,
+        notes: createDevisForm.notes || undefined,
+        tvaTaux: Number(createDevisForm.tvaTaux),
+        statut: statutDevis,
+        lignes: lignesValides,
+      })
+      setShowCreateDevis(false)
+      setOk("Devis créé.")
+      await actualiser()
+    } catch (e: unknown) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
-      setErr(msg || "Échec de création de facture.")
+      setErr(msg || "Échec création devis.")
     }
   }
 
@@ -152,12 +263,6 @@ export default function FacturationPage() {
     const t = window.setTimeout(() => setOk(""), 3000)
     return () => window.clearTimeout(t)
   }, [ok])
-
-  useEffect(() => {
-    if (!err) return
-    const t = window.setTimeout(() => setErr(""), 5000)
-    return () => window.clearTimeout(t)
-  }, [err])
 
   if (authLoading) {
     return (
@@ -215,8 +320,93 @@ export default function FacturationPage() {
             <button className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50" onClick={() => setShowCreate(v => !v)}>
               {showCreate ? "Fermer création" : "Nouvelle facture"}
             </button>
+            <button className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50" onClick={() => setShowCreateDevis(v => !v)}>
+              {showCreateDevis ? "Fermer devis" : "Nouveau devis"}
+            </button>
+            <button
+              className="px-4 py-2 rounded-xl border border-orange-200 bg-orange-50 text-sm font-semibold text-orange-700 hover:bg-orange-100"
+              onClick={async () => {
+                await chargerRelances()
+                setShowRelances(true)
+              }}
+            >
+              Relancer les impayés
+            </button>
           </div>
         </div>
+
+        {showRelances && (
+          <div className="bg-white/95 rounded-2xl border border-gray-100 p-4 mb-4 no-print">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold text-gray-900">Relances impayés</h3>
+              <button className="text-sm text-gray-500 hover:text-gray-700" onClick={() => setShowRelances(false)}>Fermer</button>
+            </div>
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {relances.map(r => (
+                <div key={r.factureId} className="rounded-xl border border-gray-100 p-3">
+                  <p className="text-sm font-semibold text-gray-900">{r.numero} — {r.client}</p>
+                  <p className="text-xs text-gray-500">
+                    Échéance: {fmtDate(r.dateEcheance)} · Retard: {r.retardJours} j · Reste: {fcfa(n(r.resteAPayer))}
+                  </p>
+                  <p className="text-xs text-gray-700 mt-1">{r.message}</p>
+                </div>
+              ))}
+              {relances.length === 0 && <p className="text-sm text-gray-500">Aucune relance à effectuer.</p>}
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button
+                className="px-3 py-2 rounded-lg bg-orange-500 text-white text-sm font-semibold hover:bg-orange-600 disabled:opacity-60"
+                disabled={relances.length === 0}
+                onClick={async () => {
+                  try {
+                    const payload = relances.map(r => r.factureId)
+                    const res = await runRelancesFactures({ factureIds: payload, canal: "MANUEL" })
+                    setOk(`${res.data.sent ?? 0} relance(s) journalisée(s).`)
+                    await chargerRelances()
+                    await actualiser()
+                  } catch (e: unknown) {
+                    const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                    setErr(msg || "Échec de l’envoi des relances.")
+                  }
+                }}
+              >
+                Lancer relances
+              </button>
+            </div>
+          </div>
+        )}
+
+        {showCreateDevis && (
+          <div className="bg-white/95 rounded-2xl border border-gray-100 p-4 mb-4 no-print">
+            <h3 className="font-bold text-gray-900 mb-3">Nouveau devis</h3>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
+              <select className="rounded-xl border border-gray-200 px-3 py-2 text-sm" value={createDevisForm.clientId} onChange={e => setCreateDevisForm(v => ({ ...v, clientId: e.target.value }))}>
+                <option value="">Client *</option>
+                {clients.map(c => <option key={c.id} value={c.id}>{c.nomRaisonSociale}</option>)}
+              </select>
+              <DatePickerFr value={createDevisForm.dateEmission} onChange={v => setCreateDevisForm(s => ({ ...s, dateEmission: v }))} placeholder="Date émission" fromYear={1990} toYear={new Date().getFullYear() + 1} />
+              <DatePickerFr value={createDevisForm.dateValidite} onChange={v => setCreateDevisForm(s => ({ ...s, dateValidite: v }))} placeholder="Date validité" fromYear={1990} toYear={new Date().getFullYear() + 1} />
+              <select className="rounded-xl border border-gray-200 px-3 py-2 text-sm" value={createDevisForm.tvaTaux} onChange={e => setCreateDevisForm(v => ({ ...v, tvaTaux: e.target.value }))}>
+                <option value="18">TVA 18%</option><option value="0">TVA 0% (exonéré)</option>
+              </select>
+            </div>
+            <input className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm mb-3" value={createDevisForm.notes} onChange={e => setCreateDevisForm(v => ({ ...v, notes: e.target.value }))} placeholder="Notes / conditions" />
+            <div className="space-y-2">
+              {createDevisForm.lignes.map((l, i) => (
+                <div key={i} className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                  <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm md:col-span-2" value={l.description} onChange={e => setCreateDevisForm(v => ({ ...v, lignes: v.lignes.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x) }))} placeholder="Description" />
+                  <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm" type="number" min={1} value={l.quantite} onChange={e => setCreateDevisForm(v => ({ ...v, lignes: v.lignes.map((x, idx) => idx === i ? { ...x, quantite: e.target.value } : x) }))} placeholder="Quantité" />
+                  <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm" type="number" min={0} value={l.prixUnitaireHt} onChange={e => setCreateDevisForm(v => ({ ...v, lignes: v.lignes.map((x, idx) => idx === i ? { ...x, prixUnitaireHt: e.target.value } : x) }))} placeholder="Prix unitaire HT" />
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button className="px-3 py-2 rounded-lg border border-gray-200 text-sm" onClick={() => setCreateDevisForm(v => ({ ...v, lignes: [...v.lignes, { description: "", quantite: "1", prixUnitaireHt: "0" }] }))}>+ Ligne</button>
+              <button className="px-3 py-2 rounded-lg border border-gray-200 text-sm" onClick={() => onCreateDevis("BROUILLON")} disabled={!createDevisForm.clientId}>Enregistrer brouillon</button>
+              <button className="px-3 py-2 rounded-lg bg-orange-500 text-white text-sm font-semibold" onClick={() => onCreateDevis("ENVOYE")} disabled={!createDevisForm.clientId}>Émettre devis</button>
+            </div>
+          </div>
+        )}
 
         {showCreate && (
           <div className="bg-white/95 rounded-2xl border border-gray-100 p-4 mb-4 no-print">
@@ -259,8 +449,8 @@ export default function FacturationPage() {
             </div>
             <div className="mt-3 flex gap-2">
               <button className="px-3 py-2 rounded-lg border border-gray-200 text-sm" onClick={() => setCreateForm(v => ({ ...v, lignes: [...v.lignes, { description: "", quantite: "1", prixUnitaireHt: "0" }] }))}>+ Ligne</button>
-              <button className="px-3 py-2 rounded-lg border border-gray-200 text-sm" onClick={() => onCreateFacture("BROUILLON")} disabled={!createForm.clientId || createForm.lignes.some(l => !l.description)}>Enregistrer brouillon</button>
-              <button className="px-3 py-2 rounded-lg bg-orange-500 text-white text-sm font-semibold" onClick={() => onCreateFacture("EMISE")} disabled={!createForm.clientId || createForm.lignes.some(l => !l.description)}>Émettre la facture</button>
+              <button className="px-3 py-2 rounded-lg border border-gray-200 text-sm" onClick={() => onCreateFacture("BROUILLON")} disabled={!createForm.clientId}>Enregistrer brouillon</button>
+              <button className="px-3 py-2 rounded-lg bg-orange-500 text-white text-sm font-semibold" onClick={() => onCreateFacture("EMISE")} disabled={!createForm.clientId}>Émettre la facture</button>
             </div>
           </div>
         )}
@@ -270,6 +460,55 @@ export default function FacturationPage() {
           <div className="bg-white/95 rounded-2xl border border-gray-100 p-4"><p className="text-sm text-gray-500">Factures émises</p><p className="text-2xl font-bold text-gray-900">{kpi.facturesEmises}</p></div>
           <div className="bg-white/95 rounded-2xl border border-gray-100 p-4"><p className="text-sm text-gray-500">Impayés</p><p className="text-2xl font-bold text-red-600">{fcfa(n(kpi.impayes))}</p></div>
           <div className="bg-white/95 rounded-2xl border border-gray-100 p-4"><p className="text-sm text-gray-500">Taux d’encaissement</p><p className="text-2xl font-bold text-emerald-600">{kpi.tauxEncaissement}%</p></div>
+        </div>
+
+        <div className="bg-white/95 rounded-2xl border border-gray-100 overflow-hidden mb-4 no-print">
+          <div className="px-4 py-3 border-b border-gray-100 font-semibold text-gray-900">Devis</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs uppercase text-gray-500 border-b border-gray-100">
+                  <th className="text-left py-3 px-3">N° devis</th>
+                  <th className="text-left py-3 px-3">Client</th>
+                  <th className="text-left py-3 px-3">Émission</th>
+                  <th className="text-left py-3 px-3">Validité</th>
+                  <th className="text-right py-3 px-3">Montant TTC</th>
+                  <th className="text-left py-3 px-3">Statut</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {devis.map(d => (
+                  <tr key={d.id} onClick={() => setSelectedDevisId(d.id)} className={`cursor-pointer ${selectedDevisId === d.id ? "bg-orange-50" : ""}`}>
+                    <td className="py-2.5 px-3">{d.numero}</td>
+                    <td className="py-2.5 px-3">{d.client.nomRaisonSociale}</td>
+                    <td className="py-2.5 px-3">{fmtDate(d.dateEmission)}</td>
+                    <td className="py-2.5 px-3">{fmtDate(d.dateValidite)}</td>
+                    <td className="py-2.5 px-3 text-right">{fcfa(n(d.totalTtc))}</td>
+                    <td className="py-2.5 px-3">{d.statut}</td>
+                  </tr>
+                ))}
+                {devis.length === 0 && <tr><td className="py-8 text-center text-gray-500" colSpan={6}>Aucun devis.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <div className="px-4 py-3 border-t border-gray-100">
+            <button
+              className="px-3 py-2 rounded-lg bg-orange-500 text-white text-sm font-semibold disabled:opacity-60"
+              disabled={!selectedDevisId}
+              onClick={async () => {
+                try {
+                  await convertirDevisEnFacture(selectedDevisId)
+                  setOk("Devis converti en facture.")
+                  await actualiser()
+                } catch (e: unknown) {
+                  const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                  setErr(msg || "Échec de conversion du devis.")
+                }
+              }}
+            >
+              Convertir en facture
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-4">
@@ -317,7 +556,7 @@ export default function FacturationPage() {
             </div>
           </div>
 
-          <aside className="bg-white/95 rounded-2xl border border-gray-100 overflow-hidden no-print">
+          <aside className="bg-white/95 rounded-2xl border border-gray-100 overflow-hidden no-print self-start h-fit">
             <div className="px-4 py-3 border-b border-gray-100">
               <h3 className="font-bold text-gray-900">Détail facture</h3>
             </div>

@@ -21,6 +21,17 @@ const FactureCreateSchema = z.object({
   lignes: z.array(LigneInput).min(1),
 })
 
+const DevisCreateSchema = z.object({
+  clientId: z.string().uuid(),
+  dateEmission: z.string(),
+  dateValidite: z.string(),
+  numero: z.string().min(1).max(60).optional(),
+  notes: z.string().max(1000).optional(),
+  tvaTaux: z.number().min(0).max(100).optional(),
+  statut: z.enum(["BROUILLON", "ENVOYE", "ACCEPTE", "REFUSE"]).optional(),
+  lignes: z.array(LigneInput).min(1),
+})
+
 const PaiementSchema = z.object({
   datePaiement: z.string(),
   montant: z.number().int().positive(),
@@ -34,11 +45,11 @@ function ymd(d: Date) {
 }
 
 export async function facturationRoutes(app: FastifyInstance) {
-  app.get("/", async (request, reply) => {
+  app.get("/devis", async (request, reply) => {
     const user = request.user as { cabinetId: string }
     const q = request.query as { clientId?: string; statut?: string; du?: string; au?: string; search?: string }
 
-    const factures = await prisma.facture.findMany({
+    const devis = await prisma.devis.findMany({
       where: {
         client: { cabinetId: user.cabinetId },
         clientId: q.clientId || undefined,
@@ -50,6 +61,259 @@ export async function facturationRoutes(app: FastifyInstance) {
               { client: { nomRaisonSociale: { contains: q.search, mode: "insensitive" } } },
             ]
           : undefined,
+      },
+      include: {
+        client: { select: { id: true, nomRaisonSociale: true } },
+        lignes: true,
+      },
+      orderBy: { dateEmission: "desc" },
+      take: 300,
+    })
+
+    return reply.send({
+      devis: devis.map(d => ({
+        id: d.id,
+        numero: d.numero,
+        dateEmission: d.dateEmission,
+        dateValidite: d.dateValidite,
+        statut: d.statut,
+        tvaTaux: d.tvaTaux.toString(),
+        sousTotalHt: d.sousTotalHt.toString(),
+        montantTva: d.montantTva.toString(),
+        totalTtc: d.totalTtc.toString(),
+        notes: d.notes,
+        client: d.client,
+        convertiEnFactureId: d.convertiEnFactureId,
+        lignes: d.lignes.map(l => ({
+          id: l.id,
+          description: l.description,
+          quantite: l.quantite.toString(),
+          prixUnitaireHt: l.prixUnitaireHt.toString(),
+          totalLigneHt: l.totalLigneHt.toString(),
+        })),
+      })),
+    })
+  })
+
+  app.post("/devis", async (request, reply) => {
+    const user = request.user as { id: string; cabinetId: string }
+    const parsed = DevisCreateSchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ erreurs: parsed.error.flatten() })
+    const body = parsed.data
+
+    const client = await prisma.client.findFirst({ where: { id: body.clientId, cabinetId: user.cabinetId } })
+    if (!client) return reply.status(404).send({ error: "Client introuvable" })
+
+    const prefix = `DEV-${new Date(body.dateEmission).getFullYear()}-`
+    const count = await prisma.devis.count({ where: { client: { cabinetId: user.cabinetId } } })
+    const numero = body.numero?.trim() || `${prefix}${String(count + 1).padStart(4, "0")}`
+    const tvaTaux = body.tvaTaux ?? Number(client.tauxTVA.toString() || "18")
+    const sousTotalHt = body.lignes.reduce((s, l) => s + Math.round(l.quantite * l.prixUnitaireHt), 0)
+    const montantTva = Math.round((sousTotalHt * tvaTaux) / 100)
+    const totalTtc = sousTotalHt + montantTva
+
+    const devis = await prisma.devis.create({
+      data: {
+        clientId: body.clientId,
+        creeParId: user.id,
+        numero,
+        dateEmission: new Date(body.dateEmission),
+        dateValidite: new Date(body.dateValidite),
+        statut: body.statut ?? "BROUILLON",
+        tvaTaux,
+        sousTotalHt,
+        montantTva,
+        totalTtc,
+        notes: body.notes,
+        lignes: {
+          create: body.lignes.map((l, i) => ({
+            description: l.description,
+            quantite: l.quantite,
+            prixUnitaireHt: l.prixUnitaireHt,
+            totalLigneHt: Math.round(l.quantite * l.prixUnitaireHt),
+            ordre: i,
+          })),
+        },
+      },
+      include: { client: { select: { id: true, nomRaisonSociale: true } }, lignes: true },
+    })
+    return reply.status(201).send({ devis })
+  })
+
+  app.post("/devis/:id/convertir", async (request, reply) => {
+    const user = request.user as { id: string; cabinetId: string }
+    const { id } = request.params as { id: string }
+
+    const devis = await prisma.devis.findFirst({
+      where: { id, client: { cabinetId: user.cabinetId } },
+      include: { client: true, lignes: true },
+    })
+    if (!devis) return reply.status(404).send({ error: "Devis introuvable" })
+    if (devis.convertiEnFactureId) return reply.status(409).send({ error: "Ce devis est déjà converti en facture." })
+    if (devis.statut !== "ACCEPTE" && devis.statut !== "ENVOYE") {
+      return reply.status(409).send({ error: "Seuls les devis envoyés/acceptés peuvent être convertis." })
+    }
+
+    const prefix = `${new Date().getFullYear()}-`
+    const count = await prisma.facture.count({ where: { client: { cabinetId: user.cabinetId } } })
+    const numeroFacture = `${prefix}${String(count + 1).padStart(4, "0")}`
+
+    const facture = await prisma.$transaction(async tx => {
+      const f = await tx.facture.create({
+        data: {
+          clientId: devis.clientId,
+          creeParId: user.id,
+          numero: numeroFacture,
+          dateEmission: new Date(),
+          dateEcheance: devis.dateValidite,
+          statut: "EMISE",
+          tvaTaux: devis.tvaTaux,
+          sousTotalHt: devis.sousTotalHt,
+          montantTva: devis.montantTva,
+          totalTtc: devis.totalTtc,
+          montantPaye: 0,
+          resteAPayer: devis.totalTtc,
+          notes: devis.notes,
+          devisSourceId: devis.id,
+          lignes: {
+            create: devis.lignes.map((l, i) => ({
+              description: l.description,
+              quantite: l.quantite,
+              prixUnitaireHt: l.prixUnitaireHt,
+              totalLigneHt: l.totalLigneHt,
+              ordre: i,
+            })),
+          },
+        },
+      })
+
+      await tx.devis.update({
+        where: { id: devis.id },
+        data: {
+          statut: "CONVERTI",
+          convertiEnFactureId: f.id,
+          convertiLe: new Date(),
+        },
+      })
+      return f
+    })
+
+    return reply.status(201).send({ factureId: facture.id })
+  })
+
+  app.get("/relances/preview", async (request, reply) => {
+    const user = request.user as { cabinetId: string }
+    const q = request.query as { clientId?: string }
+    const today = new Date()
+
+    const factures = await prisma.facture.findMany({
+      where: {
+        client: { cabinetId: user.cabinetId },
+        clientId: q.clientId || undefined,
+        statut: { in: ["EMISE", "PARTIELLEMENT_PAYEE", "EN_RETARD"] },
+        dateEcheance: { lte: today },
+      },
+      include: {
+        client: { select: { id: true, nomRaisonSociale: true, email: true, telephone: true } },
+      },
+      orderBy: [{ dateEcheance: "asc" }, { createdAt: "desc" }],
+      take: 200,
+    })
+
+    const relances = factures
+      .map(f => {
+        const reste = Number(f.resteAPayer.toString())
+        if (reste <= 0) return null
+        const daysLate = Math.max(
+          0,
+          Math.floor((today.getTime() - new Date(f.dateEcheance).getTime()) / (24 * 60 * 60 * 1000))
+        )
+        return {
+          factureId: f.id,
+          numero: f.numero,
+          clientId: f.client.id,
+          client: f.client.nomRaisonSociale,
+          dateEcheance: f.dateEcheance,
+          resteAPayer: f.resteAPayer.toString(),
+          retardJours: daysLate,
+          canalSuggere: f.client.email ? "EMAIL" : f.client.telephone ? "WHATSAPP" : "MANUEL",
+          message: `Bonjour ${f.client.nomRaisonSociale}, rappel: la facture ${f.numero} d'un montant restant de ${reste.toLocaleString("fr-FR")} FCFA est échue depuis ${daysLate} jour(s). Merci de régulariser.`,
+        }
+      })
+      .filter(Boolean)
+
+    return reply.send({ relances })
+  })
+
+  app.post("/relances/run", async (request, reply) => {
+    const user = request.user as { id: string; cabinetId: string }
+    const body = request.body as { factureIds?: string[]; canal?: "EMAIL" | "WHATSAPP" | "MANUEL" }
+    const canal = body.canal ?? "MANUEL"
+    const ids = body.factureIds ?? []
+    if (ids.length === 0) return reply.status(400).send({ error: "Aucune facture sélectionnée." })
+
+    const factures = await prisma.facture.findMany({
+      where: {
+        id: { in: ids },
+        client: { cabinetId: user.cabinetId },
+      },
+      include: { client: { select: { id: true, nomRaisonSociale: true } } },
+    })
+
+    const today = new Date()
+    let sent = 0
+    for (const f of factures) {
+      const reste = Number(f.resteAPayer.toString())
+      if (reste <= 0) continue
+      await prisma.auditLog.create({
+        data: {
+          cabinetId: user.cabinetId,
+          userId: user.id,
+          action: "FACTURE_RELANCEE",
+          entite: "factures",
+          entiteId: f.id,
+          donneeApres: {
+            numero: f.numero,
+            client: f.client.nomRaisonSociale,
+            canal,
+            dateRelance: today.toISOString(),
+            resteAPayer: f.resteAPayer.toString(),
+          },
+        },
+      })
+      sent += 1
+    }
+
+    return reply.send({ sent, canal })
+  })
+
+  app.get("/", async (request, reply) => {
+    const user = request.user as { cabinetId: string }
+    const q = request.query as { clientId?: string; statut?: string; du?: string; au?: string; search?: string }
+    const now = new Date()
+    const filtreStatut =
+      q.statut === "EN_RETARD"
+        ? {
+            statut: { in: ["EMISE", "PARTIELLEMENT_PAYEE", "EN_RETARD"] as const },
+            dateEcheance: { lt: now },
+            resteAPayer: { gt: 0 },
+          }
+        : q.statut && q.statut !== "TOUS"
+          ? { statut: q.statut as any }
+          : {}
+
+    const factures = await prisma.facture.findMany({
+      where: {
+        client: { cabinetId: user.cabinetId },
+        clientId: q.clientId || undefined,
+        dateEmission: q.du || q.au ? { gte: q.du ? new Date(q.du) : undefined, lte: q.au ? new Date(`${q.au}T23:59:59`) : undefined } : undefined,
+        OR: q.search
+          ? [
+              { numero: { contains: q.search, mode: "insensitive" } },
+              { client: { nomRaisonSociale: { contains: q.search, mode: "insensitive" } } },
+            ]
+          : undefined,
+        ...filtreStatut,
       },
       include: {
         client: { select: { id: true, nomRaisonSociale: true } },
@@ -94,7 +358,6 @@ export async function facturationRoutes(app: FastifyInstance) {
       }
     })
 
-    const now = new Date()
     const debutMois = new Date(now.getFullYear(), now.getMonth(), 1)
     const caMois = data.filter(f => new Date(f.dateEmission) >= debutMois).reduce((s, f) => s + Number(f.totalTtc), 0)
     const impayes = data.reduce((s, f) => s + Number(f.resteAPayer), 0)

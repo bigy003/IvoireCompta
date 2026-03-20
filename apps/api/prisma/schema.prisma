@@ -61,6 +61,7 @@ model Utilisateur {
   rapprochementsBancaires RapprochementBancaire[]
   facturesCreees       Facture[] @relation("FactureCreePar")
   paiementsFactures    PaiementFacture[] @relation("PaiementFactureCreePar")
+  devisCrees           Devis[] @relation("DevisCreePar")
 
   @@unique([cabinetId, email])
   @@map("utilisateurs")
@@ -110,6 +111,7 @@ model Client {
   employes          Employe[]
   mouvementsBancaires MouvementBancaire[]
   factures          Facture[]
+  devis             Devis[]
 
   @@unique([cabinetId, ncc])
   @@map("clients")
@@ -431,6 +433,8 @@ model Facture {
   montantPaye   Decimal @default(0) @db.Decimal(18,0)
   resteAPayer   Decimal @default(0) @db.Decimal(18,0)
   notes         String?
+  devisSourceId String?
+  devisSource   Devis?   @relation(fields: [devisSourceId], references: [id], onDelete: SetNull)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -440,6 +444,47 @@ model Facture {
   @@unique([clientId, numero])
   @@index([clientId, dateEmission])
   @@map("factures")
+}
+
+model Devis {
+  id            String   @id @default(uuid())
+  clientId      String
+  client        Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  creeParId     String?
+  creePar       Utilisateur? @relation("DevisCreePar", fields: [creeParId], references: [id], onDelete: SetNull)
+  numero        String
+  dateEmission  DateTime
+  dateValidite  DateTime
+  statut        StatutDevis @default(BROUILLON)
+  tvaTaux       Decimal @default(18) @db.Decimal(5,2)
+  sousTotalHt   Decimal @default(0) @db.Decimal(18,0)
+  montantTva    Decimal @default(0) @db.Decimal(18,0)
+  totalTtc      Decimal @default(0) @db.Decimal(18,0)
+  notes         String?
+  convertiEnFactureId String?
+  convertiLe    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  lignes        LigneDevis[]
+  facturesIssues Facture[]
+
+  @@unique([clientId, numero])
+  @@index([clientId, dateEmission])
+  @@map("devis")
+}
+
+model LigneDevis {
+  id             String   @id @default(uuid())
+  devisId        String
+  devis          Devis    @relation(fields: [devisId], references: [id], onDelete: Cascade)
+  description    String
+  quantite       Decimal  @default(1) @db.Decimal(10,2)
+  prixUnitaireHt Decimal  @db.Decimal(18,0)
+  totalLigneHt   Decimal  @db.Decimal(18,0)
+  ordre          Int      @default(0)
+
+  @@map("lignes_devis")
 }
 
 model LigneFacture {
@@ -634,4 +679,13 @@ enum ModePaiementFacture {
   CHEQUE
   ESPECES
   MOBILE_MONEY
+}
+
+enum StatutDevis {
+  BROUILLON
+  ENVOYE
+  ACCEPTE
+  REFUSE
+  EXPIRE
+  CONVERTI
 }

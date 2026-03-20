@@ -210,3 +210,22 @@ export const addPaiementFacture = (
   }
 ) => api.post(`/facturation/${factureId}/paiements`, data)
 export const getFacturePdfData = (factureId: string) => api.get(`/facturation/${factureId}/pdf`)
+export const previewRelancesFactures = (params?: { clientId?: string }) =>
+  api.get("/facturation/relances/preview", { params })
+export const runRelancesFactures = (data: {
+  factureIds: string[]
+  canal?: "EMAIL" | "WHATSAPP" | "MANUEL"
+}) => api.post("/facturation/relances/run", data)
+export const getDevis = (params: Record<string, string>) => api.get("/facturation/devis", { params })
+export const createDevis = (data: {
+  clientId: string
+  dateEmission: string
+  dateValidite: string
+  numero?: string
+  notes?: string
+  tvaTaux?: number
+  statut?: "BROUILLON" | "ENVOYE" | "ACCEPTE" | "REFUSE"
+  lignes: Array<{ description: string; quantite: number; prixUnitaireHt: number }>
+}) => api.post("/facturation/devis", data)
+export const convertirDevisEnFacture = (devisId: string) =>
+  api.post(`/facturation/devis/${devisId}/convertir`)
