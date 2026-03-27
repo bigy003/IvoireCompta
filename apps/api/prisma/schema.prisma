@@ -62,6 +62,7 @@ model Utilisateur {
   facturesCreees       Facture[] @relation("FactureCreePar")
   paiementsFactures    PaiementFacture[] @relation("PaiementFactureCreePar")
   devisCrees           Devis[] @relation("DevisCreePar")
+  immobilisationsCreees Immobilisation[] @relation("ImmobilisationCreePar")
 
   @@unique([cabinetId, email])
   @@map("utilisateurs")
@@ -112,6 +113,7 @@ model Client {
   mouvementsBancaires MouvementBancaire[]
   factures          Facture[]
   devis             Devis[]
+  immobilisations   Immobilisation[]
 
   @@unique([cabinetId, ncc])
   @@map("clients")
@@ -154,6 +156,7 @@ model Exercice {
   declarationsFiscales DeclarationFiscale[]
   journaux            Journal[]
   mouvementsBancaires MouvementBancaire[]
+  immobilisations     Immobilisation[]
 
   @@unique([dossierId, annee])
   @@map("exercices")
@@ -517,6 +520,37 @@ model PaiementFacture {
   @@map("paiements_facture")
 }
 
+model Immobilisation {
+  id                   String   @id @default(uuid())
+  clientId             String
+  client               Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  exerciceId           String
+  exercice             Exercice @relation(fields: [exerciceId], references: [id], onDelete: Cascade)
+  creeParId            String?
+  creePar              Utilisateur? @relation("ImmobilisationCreePar", fields: [creeParId], references: [id], onDelete: SetNull)
+  reference            String
+  libelle              String
+  categorie            CategorieImmobilisation
+  fournisseur          String?
+  compteImmobilisation String
+  compteAmortissement  String
+  dateAcquisition      DateTime
+  dateMiseEnService    DateTime
+  valeurOrigine        Decimal  @db.Decimal(18, 0)
+  valeurResiduelle     Decimal  @default(0) @db.Decimal(18, 0)
+  dureeAnnees          Int
+  methodeAmortissement MethodeAmortissement @default(LINEAIRE)
+  notes                String?
+  statut               StatutImmobilisation @default(EN_SERVICE)
+  dateSortie           DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([exerciceId, reference])
+  @@index([clientId, exerciceId])
+  @@map("immobilisations")
+}
+
 // ─────────────────────────────────────────────
 // AUDIT LOG (immuable)
 // ─────────────────────────────────────────────
@@ -688,4 +722,24 @@ enum StatutDevis {
   REFUSE
   EXPIRE
   CONVERTI
+}
+
+enum CategorieImmobilisation {
+  MATERIEL
+  VEHICULE
+  LOGICIEL
+  MOBILIER
+  BATIMENT
+  AUTRE
+}
+
+enum StatutImmobilisation {
+  EN_SERVICE
+  CEDEE
+  SORTIE
+}
+
+enum MethodeAmortissement {
+  LINEAIRE
+  DEGRESSIF
 }

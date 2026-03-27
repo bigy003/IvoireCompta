@@ -55,6 +55,7 @@ export default function Layout({ children }: Props) {
     { label: "Clôture mensuelle", href: "/cloture-mensuelle" },
     { label: "Facturation", href: "/facturation" },
     { label: "TVA", href: "/tva" },
+    { label: "Immobilisations", href: "/immobilisations" },
     { label: "DSF & Déclarations", href: "/dsf" },
     { label: "Paie", href: "/paie" },
   ]

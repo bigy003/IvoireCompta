@@ -195,6 +195,48 @@ export const validerTvaMensuelle = (data: { exerciceId: string; mois: number; an
 export const deverrouillerTvaMensuelle = (data: { exerciceId: string; mois: number; annee: number }) =>
   api.post("/tva/deverrouiller", data)
 
+/** Immobilisations */
+export const getImmobilisations = (params: Record<string, string>) => api.get("/immobilisations", { params })
+export const getImmobilisation = (id: string) => api.get(`/immobilisations/${id}`)
+export const createImmobilisation = (data: {
+  clientId: string
+  exerciceId: string
+  reference: string
+  libelle: string
+  categorie: "MATERIEL" | "VEHICULE" | "LOGICIEL" | "MOBILIER" | "BATIMENT" | "AUTRE"
+  fournisseur?: string
+  compteImmobilisation: string
+  compteAmortissement: string
+  dateAcquisition: string
+  dateMiseEnService: string
+  valeurOrigine: number
+  valeurResiduelle?: number
+  dureeAnnees: number
+  methodeAmortissement?: "LINEAIRE" | "DEGRESSIF"
+  notes?: string
+}) => api.post("/immobilisations", data)
+export const patchImmobilisation = (
+  id: string,
+  data: Partial<{
+    reference: string
+    libelle: string
+    categorie: "MATERIEL" | "VEHICULE" | "LOGICIEL" | "MOBILIER" | "BATIMENT" | "AUTRE"
+    fournisseur: string
+    compteImmobilisation: string
+    compteAmortissement: string
+    dateAcquisition: string
+    dateMiseEnService: string
+    valeurOrigine: number
+    valeurResiduelle: number
+    dureeAnnees: number
+    methodeAmortissement: "LINEAIRE" | "DEGRESSIF"
+    notes: string
+    statut: "EN_SERVICE" | "CEDEE"
+  }>
+) => api.patch(`/immobilisations/${id}`, data)
+export const sortirImmobilisation = (id: string, dateSortie: string) =>
+  api.post(`/immobilisations/${id}/sortir`, { dateSortie })
+
 /** Facturation */
 export const getFactures = (params: Record<string, string>) => api.get("/facturation", { params })
 export const createFacture = (data: {
