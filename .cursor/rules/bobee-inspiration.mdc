@@ -1,0 +1,16 @@
+---
+description: Périmètre produit inspiré de la référence Bobee (backlog IvoireCompta)
+alwaysApply: true
+---
+
+# Référence produit Bobee (IvoireCompta)
+
+Lors de l’évolution du produit, garder en tête les blocs issus d’un logiciel de compta de référence (Bobee), détaillés dans **`IvoireCompta_CDC.txt` section 9 (Annexe — Inspirations Bobee)**.
+
+**Rappel court :**
+
+- **Comptabilité :** ouverture exercice, journaux, écritures, BAL|GL, immos, **dossier de révision**, **SIG|CR|Bilan**, **imports/exports** généralisés.
+- **Gestion comptable :** **état du dossier**, **points en suspens**, **analyse de libellé** (banque), **règles sur les factures**.
+- **Autres :** banques/documents, devis|BL|facturation, stocks, notes de frais, déclarations fiscales.
+
+Ne pas tout implémenter d’un coup : prioriser le CDC et les phases ; réutiliser multi-tenant, `audit_logs`, clients/exercices.

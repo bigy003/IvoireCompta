@@ -7,6 +7,15 @@ import Layout from "@/components/layout"
 import { DatePickerFr } from "@/components/date-picker-fr"
 import { getClients, creerEcriture, api, initialiserComptabiliteClient } from "@/lib/api"
 import { PLAN_COMPTES_CI, libelleCompteDefaut } from "@/lib/plan-comptable-ci"
+import {
+  csvTemplateContent,
+  loadModeles,
+  modelesStorageKey,
+  newModeleId,
+  parseCsvLignesEcriture,
+  saveModeles,
+  type ModeleEcriture,
+} from "@/lib/ecritures-templates"
 
 interface Ligne {
   compteSyscohada: string
@@ -58,6 +67,10 @@ function EcriturePageContent() {
   const [loading, setLoading] = useState(false)
   const [succes, setSucces] = useState("")
   const [authLoading, setAuthLoading] = useState(true)
+  const [modelesOpen, setModelesOpen] = useState(false)
+  const [modelesList, setModelesList] = useState<ModeleEcriture[]>([])
+  const [nouveauModeleNom, setNouveauModeleNom] = useState("")
+  const [importErreurs, setImportErreurs] = useState<string[]>([])
 
   const totalDebit = lignes.reduce((s, l) => s + (parseInt(l.debit, 10) || 0), 0)
   const totalCredit = lignes.reduce((s, l) => s + (parseInt(l.credit, 10) || 0), 0)
@@ -213,6 +226,90 @@ function EcriturePageContent() {
     setLignes([...lignes, { compteSyscohada: "", libelleCompte: "", debit: "", credit: "" }])
   }
 
+  function ligneVide(): Ligne {
+    return { compteSyscohada: "", libelleCompte: "", debit: "", credit: "" }
+  }
+
+  function openModelesModal() {
+    setModelesList(loadModeles(modelesStorageKey()))
+    setModelesOpen(true)
+  }
+
+  function appliquerModele(m: ModeleEcriture) {
+    const base = m.lignes.map(l => ({ ...l }))
+    while (base.length < 2) base.push(ligneVide())
+    setLignes(base)
+    if (m.libelle.trim()) setLibelle(m.libelle)
+    if (m.pieceRef.trim()) setPieceRef(m.pieceRef)
+    setSelectedRows(new Set())
+    setModelesOpen(false)
+    setSucces(`Modèle « ${m.nom} » appliqué — vérifiez les montants et enregistrez.`)
+  }
+
+  function enregistrerModeleActuel() {
+    const filled = lignes.filter(l => l.compteSyscohada.trim())
+    if (filled.length < 2) {
+      alert("Au moins 2 lignes avec un compte sont nécessaires pour enregistrer un modèle.")
+      return
+    }
+    const nom =
+      nouveauModeleNom.trim() ||
+      `Modèle ${new Date().toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}`
+    const key = modelesStorageKey()
+    const list = loadModeles(key)
+    const next: ModeleEcriture = {
+      id: newModeleId(),
+      nom,
+      libelle: libelle.trim(),
+      pieceRef: pieceRef.trim(),
+      lignes: filled.map(l => ({ ...l })),
+      updatedAt: new Date().toISOString(),
+    }
+    saveModeles(key, [...list, next])
+    setNouveauModeleNom("")
+    setModelesList(loadModeles(key))
+    setSucces(`Modèle « ${nom} » enregistré.`)
+  }
+
+  function supprimerModele(id: string) {
+    if (!confirm("Supprimer ce modèle ?")) return
+    const key = modelesStorageKey()
+    const list = loadModeles(key).filter(m => m.id !== id)
+    saveModeles(key, list)
+    setModelesList(list)
+  }
+
+  function telechargerModeleCsv() {
+    const blob = new Blob([csvTemplateContent()], { type: "text/csv;charset=utf-8" })
+    const a = document.createElement("a")
+    a.href = URL.createObjectURL(blob)
+    a.download = "modele_import_ecriture.csv"
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  async function onImportCsvChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (fileInputRef.current) fileInputRef.current.value = ""
+    if (!f) return
+    setImportErreurs([])
+    try {
+      const text = await f.text()
+      const { lignes: parsed, erreurs } = parseCsvLignesEcriture(text)
+      if (erreurs.length > 0) {
+        setImportErreurs(erreurs)
+        return
+      }
+      const next = [...parsed]
+      while (next.length < 2) next.push(ligneVide())
+      setLignes(next)
+      setSelectedRows(new Set())
+      setSucces(`${parsed.length} ligne(s) importée(s) depuis le CSV.`)
+    } catch {
+      setImportErreurs(["Lecture du fichier impossible."])
+    }
+  }
+
   function supprimerLigne(index: number) {
     if (lignes.length <= 2) return
     setLignes(lignes.filter((_, i) => i !== index))
@@ -230,6 +327,7 @@ function EcriturePageContent() {
     e.preventDefault()
     setErreurs([])
     setAvertissements([])
+    setImportErreurs([])
     setSucces("")
     if (!date?.trim()) {
       setErreurs(["Veuillez choisir la date d’opération."])
@@ -339,6 +437,16 @@ function EcriturePageContent() {
               {avertissements.map((a, i) => (
                 <div key={i} className="text-amber-800 text-sm">
                   {a}
+                </div>
+              ))}
+            </div>
+          )}
+          {importErreurs.length > 0 && (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 space-y-1">
+              <p className="text-red-800 text-sm font-semibold">Import CSV</p>
+              {importErreurs.map((x, i) => (
+                <div key={i} className="text-red-700 text-sm">
+                  {x}
                 </div>
               ))}
             </div>
@@ -453,7 +561,7 @@ function EcriturePageContent() {
                   <h2 className="font-bold text-gray-900">Lignes</h2>
                   <button
                     type="button"
-                    onClick={() => alert("Modèles d'écriture : bientôt disponible.")}
+                    onClick={openModelesModal}
                     className="inline-flex items-center gap-2 text-sm font-semibold text-orange-500 hover:text-orange-600"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -617,12 +725,9 @@ function EcriturePageContent() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".csv,.txt"
+                    accept=".csv,.txt,text/csv"
                     className="hidden"
-                    onChange={() => {
-                      alert("Import : fonctionnalité à venir (CSV).")
-                      if (fileInputRef.current) fileInputRef.current.value = ""
-                    }}
+                    onChange={onImportCsvChange}
                   />
                   <button
                     type="button"
@@ -637,7 +742,14 @@ function EcriturePageContent() {
                         d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
                       />
                     </svg>
-                    Importer
+                    Importer CSV
+                  </button>
+                  <button
+                    type="button"
+                    onClick={telechargerModeleCsv}
+                    className="text-sm font-medium text-orange-600 hover:text-orange-700 underline-offset-2 hover:underline"
+                  >
+                    Modèle CSV
                   </button>
                 </div>
               </div>
@@ -686,6 +798,95 @@ function EcriturePageContent() {
             </aside>
           </div>
         </form>
+
+        {modelesOpen && (
+          <div
+            className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/45 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="modeles-ecriture-title"
+            onClick={() => setModelesOpen(false)}
+          >
+            <div
+              className="bg-white rounded-2xl shadow-xl border border-gray-100 max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
+                <h2 id="modeles-ecriture-title" className="text-lg font-bold text-gray-900">
+                  Modèles d&apos;écriture
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setModelesOpen(false)}
+                  className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+                  aria-label="Fermer"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="px-5 py-4 overflow-y-auto flex-1 space-y-5">
+                <p className="text-sm text-gray-600">
+                  Les modèles sont enregistrés dans ce navigateur (compte : session actuelle). Ils remplacent les lignes
+                  du formulaire et peuvent préremplir le libellé et la référence pièce.
+                </p>
+                <div className="rounded-xl border border-gray-200 p-4 space-y-3 bg-gray-50/50">
+                  <label className="block text-xs font-medium text-gray-600">Nom du nouveau modèle</label>
+                  <input
+                    type="text"
+                    value={nouveauModeleNom}
+                    onChange={e => setNouveauModeleNom(e.target.value)}
+                    placeholder="Ex. Achat fournitures courantes"
+                    className={inputClass}
+                  />
+                  <button
+                    type="button"
+                    onClick={enregistrerModeleActuel}
+                    className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-semibold hover:bg-orange-600"
+                  >
+                    Enregistrer le formulaire actuel comme modèle
+                  </button>
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800 mb-2">Modèles enregistrés</h3>
+                  {modelesList.length === 0 ? (
+                    <p className="text-sm text-gray-500">Aucun modèle pour le moment.</p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {modelesList.map(m => (
+                        <li
+                          key={m.id}
+                          className="flex flex-wrap items-center gap-2 justify-between rounded-xl border border-gray-100 px-3 py-2.5 bg-white"
+                        >
+                          <span className="text-sm font-medium text-gray-900">{m.nom}</span>
+                          <span className="text-xs text-gray-500">
+                            {m.lignes.length} ligne(s) ·{" "}
+                            {new Date(m.updatedAt).toLocaleDateString("fr-FR")}
+                          </span>
+                          <div className="flex gap-2 w-full sm:w-auto sm:ml-auto">
+                            <button
+                              type="button"
+                              onClick={() => appliquerModele(m)}
+                              className="flex-1 sm:flex-none px-3 py-1.5 rounded-lg bg-orange-500 text-white text-xs font-semibold hover:bg-orange-600"
+                            >
+                              Appliquer
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => supprimerModele(m.id)}
+                              className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-red-50 hover:text-red-700 hover:border-red-200"
+                            >
+                              Supprimer
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Barre d’action fixe */}
         <div className="fixed bottom-0 left-0 right-0 z-40 px-4 pb-4 pt-2 pointer-events-none">

@@ -319,5 +319,44 @@ Phase 3 — Expansion (Mois 7–12)
 
 
 
+
+9. Annexe — Inspirations référence (logiciel Bobee)
+   Référence UX / périmètre fonctionnel observé sur un logiciel de compta
+   existant (Bobee). Ne constitue pas une obligation technique ; sert de
+   backlog produit et d’idées d’évolution pour IvoireCompta.
+
+   9.1 Menu « Comptabilité » (type Bobee)
+    • Ouverture de l’exercice — workflow début d’exercice (lien avec exercices /
+      initialisation compta déjà prévus).
+    • Journaux — vue ou paramétrage par journal.
+    • Écritures — saisie (dont modèles / import CSV côté IvoireCompta).
+    • BAL | GL — balance et grand livre.
+    • Immobilisations — registre, amortissements.
+    • Dossier de révision — check-lists, contrôles, pièces de mission.
+    • SIG | CR | Bilan — états de synthèse au-delà du seul volet DSF.
+    • Imports / Exports — imports généralisés (banque, balances, etc.) et
+      exports structurés.
+
+   9.2 « Gestion comptable »
+    • État du dossier — tableau de bord par client (santé du dossier,
+      indicateurs, anomalies).
+    • Points en suspens — questions ouvertes, manques de pièces, anomalies à
+      traiter.
+    • Analyse de libellé — catégorisation depuis libellés bancaires (lien
+      naturel avec rapprochement bancaire).
+    • Règles sur les factures — automatisation comptable / TVA / lettrage sur
+      factures.
+
+   9.3 Autres volets (navigation type Bobee)
+    • Banques — compléter le volet rapprochement / mouvements.
+    • Documents — GED / pièces jointes organisées.
+    • Devis | BL | Facturation — aligné avec le module facturation existant.
+    • Stocks — inventaire / valorisation (périmètre élargi).
+    • Notes de frais — dépenses collaborateurs.
+    • Déclarations fiscales — proche du module DSF / déclarations IvoireCompta.
+
+   Priorisation : traiter par phases (MVP d’abord), en réutilisant le modèle
+   multi-tenant, audit_logs et clients/exercices existants.
+
 IvoireCompta — Cahier des Charges v1.0 — Confidentiel
 

@@ -17,6 +17,21 @@ const LoginSchema = z.object({
   totp:     z.string().length(6).optional(), // Requis pour visa expert
 })
 
+const PatchMeSchema = z
+  .object({
+    prenom:         z.string().min(1, "Prénom requis").max(100).optional(),
+    nom:            z.string().min(1, "Nom requis").max(100).optional(),
+    email:          z.string().email("E-mail invalide").optional(),
+    specialisation: z.string().max(120).optional().nullable(),
+    numeroOrdre:    z.string().max(80).optional().nullable(),
+  })
+  .refine(o => Object.keys(o).length > 0, { message: "Aucun champ à mettre à jour" })
+
+const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Mot de passe actuel requis"),
+  newPassword:     z.string().min(8, "Mot de passe : minimum 8 caractères"),
+})
+
 const RegisterSchema = z.object({
   /** Cabinet */
   cabinetNom:       z.string().min(2, "Nom du cabinet requis").max(200),
@@ -233,6 +248,7 @@ export async function authRoutes(app: FastifyInstance) {
         specialisation: u.specialisation,
         totpActif: u.totpActif,
         dernierAcces: u.dernierAcces,
+        createdAt: u.createdAt,
       },
       cabinet: {
         id: c.id,
@@ -248,6 +264,171 @@ export async function authRoutes(app: FastifyInstance) {
         planComptable: c.planComptable,
       },
     })
+  })
+
+  /**
+   * PATCH /auth/me
+   * Mise à jour du profil connecté (pas le rôle)
+   */
+  app.patch("/me", async (request, reply) => {
+    const parsed = PatchMeSchema.safeParse(request.body)
+    if (!parsed.success) {
+      const msg = parsed.error.flatten().fieldErrors
+      const first = Object.values(msg).flat()[0] ?? parsed.error.flatten().formErrors[0] ?? "Données invalides"
+      return reply.status(400).send({ error: first })
+    }
+    const jwt = request.user as { id: string; cabinetId: string; role: string }
+    const body = parsed.data
+
+    const existing = await prisma.utilisateur.findFirst({
+      where: { id: jwt.id, cabinetId: jwt.cabinetId, actif: true },
+    })
+    if (!existing) return reply.status(404).send({ error: "Utilisateur introuvable" })
+
+    if (body.email !== undefined) {
+      const emailNorm = body.email.trim().toLowerCase()
+      const dup = await prisma.utilisateur.findFirst({
+        where: {
+          cabinetId: jwt.cabinetId,
+          email:     emailNorm,
+          NOT:       { id: jwt.id },
+          actif:     true,
+        },
+      })
+      if (dup) {
+        return reply.status(409).send({
+          error: "Cet e-mail est déjà utilisé par un autre compte du cabinet.",
+        })
+      }
+    }
+
+    const spec =
+      body.specialisation === undefined
+        ? undefined
+        : body.specialisation === null || body.specialisation.trim() === ""
+          ? null
+          : body.specialisation.trim()
+
+    const no =
+      body.numeroOrdre === undefined
+        ? undefined
+        : body.numeroOrdre === null || String(body.numeroOrdre).trim() === ""
+          ? null
+          : String(body.numeroOrdre).trim()
+
+    if (jwt.role !== "EXPERT_COMPTABLE" && no !== undefined && no !== null) {
+      return reply.status(403).send({
+        error: "Seul un expert-comptable peut renseigner un n° d'ordre ONECCA personnel.",
+      })
+    }
+
+    try {
+      await prisma.utilisateur.update({
+        where: { id: jwt.id },
+        data: {
+          ...(body.prenom !== undefined && { prenom: body.prenom.trim() }),
+          ...(body.nom !== undefined && { nom: body.nom.trim() }),
+          ...(body.email !== undefined && { email: body.email.trim().toLowerCase() }),
+          ...(body.specialisation !== undefined && { specialisation: spec }),
+          ...(body.numeroOrdre !== undefined && { numeroOrdre: no }),
+        },
+      })
+    } catch (e: unknown) {
+      const code = (e as { code?: string })?.code
+      if (code === "P2002") {
+        return reply.status(409).send({ error: "Cet e-mail est déjà utilisé." })
+      }
+      throw e
+    }
+
+    await prisma.auditLog.create({
+      data: {
+        cabinetId: jwt.cabinetId,
+        userId:    jwt.id,
+        action:    "PROFIL_MODIFIE",
+        entite:    "utilisateurs",
+        entiteId:  jwt.id,
+        ipAddress: request.ip,
+      },
+    })
+
+    const u = await prisma.utilisateur.findFirst({
+      where: { id: jwt.id, cabinetId: jwt.cabinetId, actif: true },
+      include: { cabinet: true },
+    })
+    if (!u) return reply.status(404).send({ error: "Utilisateur introuvable" })
+    const c = u.cabinet
+    return reply.send({
+      utilisateur: {
+        id: u.id,
+        prenom: u.prenom,
+        nom: u.nom,
+        email: u.email,
+        role: u.role,
+        numeroOrdre: u.numeroOrdre,
+        specialisation: u.specialisation,
+        totpActif: u.totpActif,
+        dernierAcces: u.dernierAcces,
+        createdAt: u.createdAt,
+      },
+      cabinet: {
+        id: c.id,
+        nom: c.nom,
+        numeroOrdre: c.numeroOrdre,
+        rccm: c.rccm,
+        ncc: c.ncc,
+        secteurActivite: c.secteurActivite,
+        adresse: c.adresse,
+        telephone: c.telephone,
+        email: c.email,
+        regimeFiscal: c.regimeFiscal,
+        planComptable: c.planComptable,
+      },
+    })
+  })
+
+  /**
+   * POST /auth/password
+   * Changement du mot de passe (401 évité pour ne pas déclencher une déconnexion côté client axios)
+   */
+  app.post("/password", async (request, reply) => {
+    const parsed = ChangePasswordSchema.safeParse(request.body)
+    if (!parsed.success) {
+      const msg = parsed.error.flatten().fieldErrors
+      const first = Object.values(msg).flat()[0] ?? "Données invalides"
+      return reply.status(400).send({ error: first })
+    }
+    const jwt = request.user as { id: string; cabinetId: string }
+    const { currentPassword, newPassword } = parsed.data
+
+    const u = await prisma.utilisateur.findFirst({
+      where: { id: jwt.id, cabinetId: jwt.cabinetId, actif: true },
+    })
+    if (!u) return reply.status(404).send({ error: "Utilisateur introuvable" })
+
+    const ok = await bcrypt.compare(currentPassword, u.passwordHash)
+    if (!ok) {
+      return reply.status(400).send({ error: "Mot de passe actuel incorrect." })
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10)
+    await prisma.utilisateur.update({
+      where: { id: jwt.id },
+      data:  { passwordHash },
+    })
+
+    await prisma.auditLog.create({
+      data: {
+        cabinetId: jwt.cabinetId,
+        userId:    jwt.id,
+        action:    "MOT_DE_PASSE_MODIFIE",
+        entite:    "utilisateurs",
+        entiteId:  jwt.id,
+        ipAddress: request.ip,
+      },
+    })
+
+    return reply.send({ message: "Mot de passe mis à jour." })
   })
 
   /**

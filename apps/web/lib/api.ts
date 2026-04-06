@@ -25,6 +25,15 @@ api.interceptors.response.use(
 
 export const login = (email: string, password: string) => api.post("/auth/login", { email, password })
 export const getMe = () => api.get("/auth/me")
+export const patchMe = (data: {
+  prenom?: string
+  nom?: string
+  email?: string
+  specialisation?: string | null
+  numeroOrdre?: string | null
+}) => api.patch("/auth/me", data)
+export const changePassword = (currentPassword: string, newPassword: string) =>
+  api.post("/auth/password", { currentPassword, newPassword })
 export const totpSetup = () => api.post("/auth/totp/setup")
 export const totpConfirmer = (totpCode: string) => api.post("/auth/totp/confirmer", { totpCode })
 
