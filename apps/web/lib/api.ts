@@ -106,6 +106,9 @@ export const viserDsf = (id: string, visaToken: string) =>
   api.post(`/declarations/${id}/viser`, { visaToken })
 export const deposerDsf = (id: string, referenceEimpots: string) =>
   api.post(`/declarations/${id}/deposer`, { referenceEimpots })
+/** DSF déjà déposée : corriger la référence e-impôts */
+export const patchDsfReferenceEimpots = (declarationId: string, referenceEimpots: string) =>
+  api.patch(`/declarations/${declarationId}/reference-eimpots`, { referenceEimpots })
 
 /** Paie */
 export const getPaieEmployes = (clientId: string) =>

@@ -13,6 +13,7 @@ import {
   preparerDepotEcheance,
   deposerEcheance,
   getHistoriqueDepots,
+  patchDsfReferenceEimpots,
 } from "@/lib/api"
 
 const TYPE_LABEL: Record<string, string> = {
@@ -55,6 +56,8 @@ type Ligne = {
   joursRestants: number
   uiStatut: "DEPOSEE" | "EN_RETARD" | "URGENT" | "A_FAIRE"
   exerciceId: string | null
+  declarationId?: string | null
+  referenceEimpots?: string | null
 }
 type TimelineItem = {
   id: string
@@ -111,6 +114,9 @@ export default function DsfPage() {
   const [timelineFamille, setTimelineFamille] = useState<"" | "DSF" | "EIMPOTS">("")
   const [timelineClient, setTimelineClient] = useState("")
   const [timelineSearch, setTimelineSearch] = useState("")
+  const [modalRefDsf, setModalRefDsf] = useState<Ligne | null>(null)
+  const [refEimpotsDraft, setRefEimpotsDraft] = useState("")
+  const [refSaving, setRefSaving] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -280,6 +286,24 @@ export default function DsfPage() {
       await load()
     } catch (e: unknown) {
       setErr(messageErreurApi(e))
+    }
+  }
+
+  async function onSaveReferenceEimpots(e: React.FormEvent) {
+    e.preventDefault()
+    if (!modalRefDsf?.declarationId || !refEimpotsDraft.trim()) return
+    setRefSaving(true)
+    setErr("")
+    setSucces("")
+    try {
+      const r = await patchDsfReferenceEimpots(modalRefDsf.declarationId, refEimpotsDraft.trim())
+      setSucces(r.data?.message ?? "Référence mise à jour.")
+      setModalRefDsf(null)
+      await load()
+    } catch (e: unknown) {
+      setErr(messageErreurApi(e))
+    } finally {
+      setRefSaving(false)
     }
   }
 
@@ -513,19 +537,41 @@ export default function DsfPage() {
                           {row.typeDeclaration === "DSF_ANNUELLE" && !row.exerciceId && row.uiStatut !== "DEPOSEE" && (
                             <span className="text-xs text-gray-400 text-center">Exercice manquant</span>
                           )}
-                          {row.uiStatut === "DEPOSEE" && (
-                            <div className="flex gap-1">
-                              <span className="p-2 text-gray-300 cursor-not-allowed" title="Bientôt">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                                  />
-                                </svg>
-                              </span>
+                          {row.uiStatut === "DEPOSEE" && row.typeDeclaration === "DSF_ANNUELLE" && (
+                            <div className="flex flex-wrap items-center justify-center gap-1.5">
+                              {row.exerciceId && (
+                                <Link
+                                  href={`/dsf/tableaux/${row.exerciceId}`}
+                                  className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 text-xs font-semibold hover:border-orange-300 hover:text-orange-700 whitespace-nowrap"
+                                >
+                                  Voir tableaux
+                                </Link>
+                              )}
+                              {row.declarationId && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setModalRefDsf(row)
+                                    setRefEimpotsDraft(row.referenceEimpots?.trim() ?? "")
+                                  }}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-orange-200 bg-orange-50 text-orange-900 text-xs font-semibold hover:bg-orange-100 whitespace-nowrap"
+                                  title="Corriger la référence e-impôts"
+                                >
+                                  <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      strokeWidth={2}
+                                      d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                                    />
+                                  </svg>
+                                  Réf. e-impôts
+                                </button>
+                              )}
                             </div>
+                          )}
+                          {row.uiStatut === "DEPOSEE" && row.typeDeclaration !== "DSF_ANNUELLE" && (
+                            <span className="text-xs text-gray-400 text-center">Déposée</span>
                           )}
                           {row.typeDeclaration !== "DSF_ANNUELLE" && row.uiStatut !== "DEPOSEE" && (
                             <div className="flex flex-wrap items-center justify-center gap-1.5">
@@ -687,6 +733,55 @@ export default function DsfPage() {
                 <button
                   type="button"
                   onClick={() => setModalDsf(false)}
+                  className="px-5 py-2.5 rounded-xl border border-gray-200 text-sm"
+                >
+                  Annuler
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {modalRefDsf && modalRefDsf.declarationId && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+          onClick={() => !refSaving && setModalRefDsf(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 border border-gray-100"
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-gray-900 mb-1">Référence e-impôts (DSF)</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              {modalRefDsf.clientNom} — {modalRefDsf.periodeLabel}. Corrigez la référence si elle a été saisie par
+              erreur après dépôt.
+            </p>
+            <form onSubmit={onSaveReferenceEimpots} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Référence e-impôts</label>
+                <input
+                  type="text"
+                  required
+                  value={refEimpotsDraft}
+                  onChange={e => setRefEimpotsDraft(e.target.value)}
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-mono"
+                  placeholder="Référence déclaration"
+                  autoComplete="off"
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="submit"
+                  disabled={refSaving || !refEimpotsDraft.trim()}
+                  className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white font-semibold text-sm hover:bg-orange-600 disabled:opacity-50"
+                >
+                  {refSaving ? "…" : "Enregistrer"}
+                </button>
+                <button
+                  type="button"
+                  disabled={refSaving}
+                  onClick={() => setModalRefDsf(null)}
                   className="px-5 py-2.5 rounded-xl border border-gray-200 text-sm"
                 >
                   Annuler

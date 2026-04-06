@@ -476,24 +476,75 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="rounded-2xl bg-gradient-to-br from-orange-50 to-green-50 border border-orange-100 p-5">
-              <h2 className="font-bold text-gray-900 mb-3">Aide & ressources</h2>
-              <ul className="space-y-3 text-sm text-gray-700">
+            <div className="rounded-2xl bg-gradient-to-br from-orange-50 to-green-50 border border-orange-100 p-5 flex flex-col">
+              <h2 className="font-bold text-gray-900 mb-1">SYSCOHADA & outils CI</h2>
+              <p className="text-xs text-gray-600 mb-4 leading-relaxed">
+                Référentiel des entreprises (révisé) — plan comptable et contrôles à la saisie ; liasse fiscale alignée
+                DGI-CI dans le module DSF.
+              </p>
+              <ul className="space-y-2.5 text-sm flex-1">
                 <li>
-                  <span className="font-medium text-gray-900">Modèles d&apos;écriture</span>
-                  <p className="text-xs text-gray-500 mt-0.5">SYSCOHADA — bientôt disponible</p>
+                  <Link
+                    href="/ecritures"
+                    className="font-semibold text-orange-700 hover:text-orange-800 inline-flex items-center gap-1"
+                  >
+                    Écritures & plan comptable
+                    <span aria-hidden>→</span>
+                  </Link>
+                  <p className="text-[11px] text-gray-500 mt-0.5">9 classes, comptes CI, équilibre débit / crédit</p>
                 </li>
-                <li className="pt-2 border-t border-orange-100">
-                  <span className="font-medium text-gray-900">Support IvoireCompta</span>
-                  <p className="text-xs text-gray-600 mt-1">+225 07 22 33 44 55</p>
+                <li className="pt-2 border-t border-orange-100/80">
+                  <Link
+                    href="/bal-gl"
+                    className="font-semibold text-orange-700 hover:text-orange-800 inline-flex items-center gap-1"
+                  >
+                    Balance & grand livre
+                    <span aria-hidden>→</span>
+                  </Link>
+                  <p className="text-[11px] text-gray-500 mt-0.5">Synthèse des comptes par exercice</p>
+                </li>
+                <li className="pt-2 border-t border-orange-100/80">
+                  <Link
+                    href="/immobilisations"
+                    className="font-semibold text-orange-700 hover:text-orange-800 inline-flex items-center gap-1"
+                  >
+                    Immobilisations
+                    <span aria-hidden>→</span>
+                  </Link>
+                  <p className="text-[11px] text-gray-500 mt-0.5">Registre, amortissements</p>
+                </li>
+                <li className="pt-2 border-t border-orange-100/80">
+                  <Link
+                    href="/dsf"
+                    className="font-semibold text-orange-700 hover:text-orange-800 inline-flex items-center gap-1"
+                  >
+                    DSF & tableaux DGI-CI
+                    <span aria-hidden>→</span>
+                  </Link>
+                  <p className="text-[11px] text-gray-500 mt-0.5">Génération, visa, dépôt e-impôts</p>
+                </li>
+                <li className="pt-2 border-t border-orange-100/80">
+                  <Link
+                    href="/tva"
+                    className="font-semibold text-orange-700 hover:text-orange-800 inline-flex items-center gap-1"
+                  >
+                    TVA mensuelle
+                    <span aria-hidden>→</span>
+                  </Link>
+                  <p className="text-[11px] text-gray-500 mt-0.5">Suivi et validation par période</p>
                 </li>
               </ul>
-              <button
-                type="button"
-                className="mt-4 w-full rounded-xl bg-white border border-gray-200 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50"
-              >
-                Envoyer un message
-              </button>
+              <div className="mt-4 pt-4 border-t border-orange-100">
+                <p className="text-xs font-semibold text-gray-800 mb-1">Support IvoireCompta</p>
+                <a
+                  href="https://wa.me/2250722334455"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm font-medium text-green-700 hover:text-green-800"
+                >
+                  WhatsApp +225 07 22 33 44 55
+                </a>
+              </div>
             </div>
           </div>
 

@@ -397,6 +397,60 @@ export async function declarationRoutes(app: FastifyInstance) {
   })
 
   /**
+   * PATCH /declarations/:id/reference-eimpots
+   * Corrige la référence e-impôts d'une DSF déjà déposée (ou acceptée)
+   */
+  app.patch("/:id/reference-eimpots", async (request, reply) => {
+    const user = request.user as { id: string; cabinetId: string }
+    const { id } = request.params as { id: string }
+    const { referenceEimpots } = request.body as { referenceEimpots?: string }
+    const ref = (referenceEimpots ?? "").trim()
+    if (!ref) return reply.status(400).send({ error: "referenceEimpots requis" })
+
+    const decl = await prisma.declarationFiscale.findFirst({
+      where: {
+        id,
+        typeDeclaration: "DSF_ANNUELLE",
+        exercice: { dossier: { client: { cabinetId: user.cabinetId } } },
+      },
+    })
+    if (!decl) return reply.status(404).send({ error: "Déclaration introuvable" })
+    if (decl.statut !== "DEPOSEE" && decl.statut !== "ACCEPTEE") {
+      return reply.status(409).send({
+        error: "La référence ne peut être modifiée que pour une DSF déjà déposée ou acceptée.",
+      })
+    }
+
+    const prev = decl.referenceEimpots
+    const updated = await prisma.declarationFiscale.update({
+      where: { id },
+      data: { referenceEimpots: ref, updatedAt: new Date() },
+    })
+
+    await prisma.auditLog.create({
+      data: {
+        cabinetId:   user.cabinetId,
+        userId:      user.id,
+        action:      "DSF_REFERENCE_EIMPOTS_MAJ",
+        entite:      "declarations_fiscales",
+        entiteId:    id,
+        donneeAvant: { referenceEimpots: prev } as object,
+        donneeApres: { referenceEimpots: ref } as object,
+      },
+    })
+
+    return reply.send({
+      declaration: {
+        id: updated.id,
+        statut: updated.statut,
+        referenceEimpots: updated.referenceEimpots,
+        dateDepot: updated.dateDepot?.toISOString() ?? null,
+      },
+      message: "Référence e-impôts mise à jour.",
+    })
+  })
+
+  /**
    * GET /declarations/echeances
    * Toutes les échéances fiscales du cabinet (tableau de bord)
    */
@@ -463,6 +517,27 @@ export async function declarationRoutes(app: FastifyInstance) {
       exParClientAnnee.set(`${ex.dossier.clientId}:${ex.annee}`, ex.id)
     }
 
+    const declarationsDsf = await prisma.declarationFiscale.findMany({
+      where: {
+        typeDeclaration: "DSF_ANNUELLE",
+        exercice: { dossier: { clientId: { in: clientIds } } },
+      },
+      select: {
+        id: true,
+        periodeAnnee: true,
+        referenceEimpots: true,
+        exercice: { select: { dossier: { select: { clientId: true } } } },
+      },
+    })
+    const declParClientAnnee = new Map<string, { id: string; referenceEimpots: string | null }>()
+    for (const d of declarationsDsf) {
+      const cid = d.exercice.dossier.clientId
+      declParClientAnnee.set(`${cid}:${d.periodeAnnee}`, {
+        id: d.id,
+        referenceEimpots: d.referenceEimpots,
+      })
+    }
+
     const maintenant = new Date()
     const debutJour = new Date(maintenant.getFullYear(), maintenant.getMonth(), maintenant.getDate())
 
@@ -471,10 +546,19 @@ export async function declarationRoutes(app: FastifyInstance) {
 
     const lignes = rows.map(r => {
       let exerciceId: string | null = null
+      let declarationId: string | null = null
+      let referenceEimpots: string | null = null
       if (r.typeDeclaration === "DSF_ANNUELLE") {
         const m = r.periodeLabel.match(/DSF-(\d{4})/i)
         if (m) {
-          exerciceId = exParClientAnnee.get(`${r.clientId}:${parseInt(m[1], 10)}`) ?? null
+          const annee = parseInt(m[1], 10)
+          const key = `${r.clientId}:${annee}`
+          exerciceId = exParClientAnnee.get(key) ?? null
+          const dinfo = declParClientAnnee.get(key)
+          if (dinfo) {
+            declarationId = dinfo.id
+            referenceEimpots = dinfo.referenceEimpots
+          }
         }
       }
 
@@ -503,6 +587,8 @@ export async function declarationRoutes(app: FastifyInstance) {
         statutEcheance: r.statut,
         uiStatut,
         exerciceId,
+        declarationId,
+        referenceEimpots,
       }
     })
 
