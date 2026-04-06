@@ -326,6 +326,7 @@ export async function immobilisationsRoutes(app: FastifyInstance) {
       },
     })
     if (!row) return reply.status(404).send({ error: "Immobilisation introuvable" })
+
     const refDate = new Date()
     const immo = mapImmobilisation(row, refDate)
     const origine = toNum(row.valeurOrigine)
