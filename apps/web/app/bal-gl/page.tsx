@@ -7,7 +7,7 @@ import Layout from "@/components/layout"
 import { getBalance, getClients, getEcritures, api } from "@/lib/api"
 
 type Client = { id: string; nomRaisonSociale: string }
-type Exercice = { id: string; annee: number }
+type Exercice = { id: string; annee: number; dateDebut?: string; dateFin?: string }
 type Journal = { id: string; code: string; libelle: string }
 type BalanceRow = { compte: string; libelle: string; debit: string; credit: string; solde: string }
 type GLRow = {
@@ -87,14 +87,24 @@ export default function BalGlPage() {
     const list = (re.data.exercices ?? []) as Exercice[]
     setExercices(list)
     const selected = preferredExerciceId && list.some(x => x.id === preferredExerciceId) ? preferredExerciceId : list[0]?.id
-    if (selected) await onExerciceChange(selected)
+    if (selected) await onExerciceChange(selected, list)
   }
 
-  async function onExerciceChange(id: string) {
+  function applyPeriodeGlDepuisExercice(list: Exercice[], id: string) {
+    const ex = list.find(e => e.id === id)
+    if (ex?.dateDebut && ex?.dateFin) {
+      setDu(ymd(new Date(ex.dateDebut)))
+      setAu(ymd(new Date(ex.dateFin)))
+    }
+  }
+
+  async function onExerciceChange(id: string, exercicesSource?: Exercice[]) {
     setExerciceId(id)
     setBalance([])
     setGlRows([])
     if (!id) return
+    const src = exercicesSource ?? exercices
+    applyPeriodeGlDepuisExercice(src, id)
     const rj = await api.get(`/journaux?exerciceId=${id}`)
     const js = (rj.data.journaux ?? []) as Journal[]
     setJournaux(js)
@@ -314,7 +324,12 @@ export default function BalGlPage() {
               <option value="">Client</option>
               {clients.map(c => <option key={c.id} value={c.id}>{c.nomRaisonSociale}</option>)}
             </select>
-            <select className="rounded-xl border border-gray-200 px-3 py-2.5 text-sm" value={exerciceId} onChange={e => onExerciceChange(e.target.value)} disabled={!clientId}>
+            <select
+              className="rounded-xl border border-gray-200 px-3 py-2.5 text-sm"
+              value={exerciceId}
+              onChange={e => void onExerciceChange(e.target.value, exercices)}
+              disabled={!clientId}
+            >
               <option value="">Exercice</option>
               {exercices.map(e => <option key={e.id} value={e.id}>{e.annee}</option>)}
             </select>

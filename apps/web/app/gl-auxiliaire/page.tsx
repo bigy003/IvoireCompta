@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import Cookies from "js-cookie"
 import Layout from "@/components/layout"
+import { DatePickerFr } from "@/components/date-picker-fr"
 import {
   api,
   delettrerGlAuxiliaire,
@@ -17,6 +18,17 @@ type Client = { id: string; nomRaisonSociale: string }
 type Dossier = { id: string; typeMission: string }
 type Exercice = { id: string; annee: number }
 type CompteRow = { compte: string; intitule: string; debit: number; credit: number; solde: number; nb: number; letrees: number; pctLettre: number }
+const defaultGlStats = {
+  soldeTotal: 0,
+  soldeTousComptes: 0,
+  nonLettres: 0,
+  montantNonLettres: 0,
+  lettres: 0,
+  montantLettres: 0,
+  pctLettresLignes: 0,
+  ecart: 0,
+}
+
 type MvtRow = {
   id: string
   ligneId: string
@@ -73,9 +85,26 @@ export default function GlAuxiliairePage() {
 
   const [comptes, setComptes] = useState<CompteRow[]>([])
   const [mouvements, setMouvements] = useState<MvtRow[]>([])
-  const [stats, setStats] = useState({ soldeTotal: 0, nonLettres: 0, lettres: 0, ecart: 0 })
+  const [stats, setStats] = useState(defaultGlStats)
+  const [intituleCompteGl, setIntituleCompteGl] = useState("")
   const [selectedLignes, setSelectedLignes] = useState<string[]>([])
-  const [audit, setAudit] = useState<Array<{ id: string; action: string; createdAt: string; userId?: string | null }>>([])
+  const [audit, setAudit] = useState<
+    Array<{ id: string; action: string; createdAt: string; userId?: string | null; user?: { nomComplet?: string; email?: string | null } | null }>
+  >([])
+
+  const anneeExercice = useMemo(() => exercices.find(e => e.id === exerciceId)?.annee, [exercices, exerciceId])
+  const yearPickerFrom = anneeExercice != null ? anneeExercice - 1 : 2020
+  const yearPickerTo = anneeExercice != null ? anneeExercice + 1 : new Date().getFullYear() + 3
+
+  function auditActionLabel(action: string) {
+    if (action === "GL_AUX_LETTRAGE") return "Lettrage appliqué"
+    if (action === "GL_AUX_DELETTRAGE") return "Délettrage"
+    return action
+  }
+  function auditDotClass(action: string) {
+    if (action === "GL_AUX_DELETTRAGE") return "bg-amber-500"
+    return "bg-emerald-500"
+  }
 
   const debitSel = useMemo(
     () => mouvements.filter(m => selectedLignes.includes(m.ligneId)).reduce((s, m) => s + m.debit, 0),
@@ -130,10 +159,12 @@ export default function GlAuxiliairePage() {
     }
   }
 
-  async function loadData() {
+  async function loadData(opts?: { compteFilter?: string }) {
     if (!exerciceId) return
     setLoading(true)
     setErr("")
+    const compteQ =
+      opts?.compteFilter !== undefined ? opts.compteFilter || undefined : compte || undefined
     try {
       const r = await getGlAuxiliaire({
         exerciceId,
@@ -141,15 +172,24 @@ export default function GlAuxiliairePage() {
         du,
         au,
         search,
-        compte: compte || undefined,
+        compte: compteQ,
       })
       setComptes((r.data.comptes ?? []) as CompteRow[])
       setMouvements((r.data.mouvements ?? []) as MvtRow[])
-      setStats(r.data.stats ?? { soldeTotal: 0, nonLettres: 0, lettres: 0, ecart: 0 })
+      setStats({ ...defaultGlStats, ...(r.data.stats as object) } as typeof defaultGlStats)
+      setIntituleCompteGl(String(r.data.intituleCompteSelectionne ?? ""))
       setCompte((r.data.compteSelected as string) ?? "")
       setSelectedLignes([])
       const ra = await getAuditGlAuxiliaire(exerciceId)
-      setAudit((ra.data.audit ?? []) as Array<{ id: string; action: string; createdAt: string; userId?: string | null }>)
+      setAudit(
+        (ra.data.audit ?? []) as Array<{
+          id: string
+          action: string
+          createdAt: string
+          userId?: string | null
+          user?: { nomComplet?: string; email?: string | null } | null
+        }>
+      )
       setOk("GL auxiliaire actualisé.")
     } catch {
       setErr("Impossible de charger le GL auxiliaire.")
@@ -230,7 +270,7 @@ export default function GlAuxiliairePage() {
         {err && <div className="mb-3 rounded-xl bg-red-50 border border-red-100 text-red-800 px-4 py-3 text-sm">{err}</div>}
 
         <div className="bg-white rounded-2xl border border-gray-100 p-4 mb-4 space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-7 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2 items-end">
             <select className="rounded-xl border border-gray-200 px-3 py-2.5 text-sm" value={clientId} onChange={e => onClientChange(e.target.value)}>
               <option value="">Client</option>
               {clients.map(c => <option key={c.id} value={c.id}>{c.nomRaisonSociale}</option>)}
@@ -253,15 +293,29 @@ export default function GlAuxiliairePage() {
               <option value="CLIENTS">Clients (411)</option>
               <option value="FOURNISSEURS">Fournisseurs (401)</option>
             </select>
-            <input type="date" className="rounded-xl border border-gray-200 px-3 py-2.5 text-sm" value={du} onChange={e => setDu(e.target.value)} />
-            <input type="date" className="rounded-xl border border-gray-200 px-3 py-2.5 text-sm" value={au} onChange={e => setAu(e.target.value)} />
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Période du</p>
+              <DatePickerFr value={du} onChange={setDu} fromYear={yearPickerFrom} toYear={yearPickerTo} className="w-full" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">au</p>
+              <DatePickerFr value={au} onChange={setAu} fromYear={yearPickerFrom} toYear={yearPickerTo} className="w-full" />
+            </div>
             <button className="rounded-xl bg-orange-500 text-white px-4 py-2.5 text-sm font-semibold hover:bg-orange-600" onClick={loadData} disabled={!exerciceId || loading}>
               {loading ? "Chargement..." : "Actualiser"}
             </button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-[1fr_220px_170px] gap-2">
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher (libellé, pièce, référence...)" className="rounded-xl border border-gray-200 px-3 py-2.5 text-sm" />
-            <select value={compte} onChange={e => setCompte(e.target.value)} className="rounded-xl border border-gray-200 px-3 py-2.5 text-sm">
+            <select
+              value={compte}
+              onChange={e => {
+                const v = e.target.value
+                setCompte(v)
+                void loadData({ compteFilter: v })
+              }}
+              className="rounded-xl border border-gray-200 px-3 py-2.5 text-sm"
+            >
               <option value="">Compte auxiliaire (optionnel)</option>
               {comptes.map(c => <option key={c.compte} value={c.compte}>{c.compte} - {c.intitule}</option>)}
             </select>
@@ -284,11 +338,29 @@ export default function GlAuxiliairePage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
-          <div className="bg-emerald-50 rounded-xl border border-emerald-100 p-4"><p className="text-xs text-emerald-700">Solde total auxiliaire</p><p className="text-2xl font-bold text-emerald-900">{fcfa(stats.soldeTotal)}</p></div>
-          <div className="bg-amber-50 rounded-xl border border-amber-100 p-4"><p className="text-xs text-amber-700">Écritures non lettrées</p><p className="text-2xl font-bold text-amber-900">{stats.nonLettres}</p></div>
-          <div className="bg-blue-50 rounded-xl border border-blue-100 p-4"><p className="text-xs text-blue-700">Écritures lettrées</p><p className="text-2xl font-bold text-blue-900">{stats.lettres}</p></div>
-          <div className="bg-red-50 rounded-xl border border-red-100 p-4"><p className="text-xs text-red-700">Écart Débit/Crédit</p><p className="text-2xl font-bold text-red-900">{fcfa(stats.ecart)}</p></div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
+          <div className="bg-emerald-50 rounded-xl border border-emerald-100 p-4">
+            <p className="text-xs text-emerald-700 font-medium">Solde total auxiliaire</p>
+            <p className="text-2xl font-bold text-emerald-900 mt-1">{fcfa(stats.soldeTotal)}</p>
+            <p className="text-[11px] text-emerald-700/80 mt-2">Compte affiché{compte ? ` · ${compte}` : ""}</p>
+          </div>
+          <div className="bg-amber-50 rounded-xl border border-amber-100 p-4">
+            <p className="text-xs text-amber-700 font-medium">Écritures non lettrées</p>
+            <p className="text-2xl font-bold text-amber-900 mt-1">{stats.nonLettres}</p>
+            <p className="text-[11px] text-amber-800/85 mt-2">Total {fcfa(stats.montantNonLettres)}</p>
+          </div>
+          <div className="bg-blue-50 rounded-xl border border-blue-100 p-4">
+            <p className="text-xs text-blue-700 font-medium">Écritures lettrées</p>
+            <p className="text-2xl font-bold text-blue-900 mt-1">{stats.lettres}</p>
+            <p className="text-[11px] text-blue-800/85 mt-2">
+              Total {fcfa(stats.montantLettres)} · {stats.pctLettresLignes}% des lignes
+            </p>
+          </div>
+          <div className="bg-red-50 rounded-xl border border-red-100 p-4">
+            <p className="text-xs text-red-700 font-medium">Écart Débit/Crédit</p>
+            <p className="text-2xl font-bold text-red-900 mt-1">{fcfa(stats.ecart)}</p>
+            <p className="text-[11px] text-red-800/80 mt-2">Sur les mouvements du compte (période)</p>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-[340px_1fr_290px] gap-3 items-start">
@@ -305,7 +377,14 @@ export default function GlAuxiliairePage() {
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {comptes.map(c => (
-                    <tr key={c.compte} className={`cursor-pointer ${compte === c.compte ? "bg-orange-50" : ""}`} onClick={() => setCompte(c.compte)}>
+                    <tr
+                      key={c.compte}
+                      className={`cursor-pointer ${compte === c.compte ? "bg-orange-50" : ""}`}
+                      onClick={() => {
+                        setCompte(c.compte)
+                        void loadData({ compteFilter: c.compte })
+                      }}
+                    >
                       <td className="py-2.5 px-3">
                         <div className="font-medium">{c.compte}</div>
                         <div className="text-xs text-gray-500">{c.intitule}</div>
@@ -319,9 +398,17 @@ export default function GlAuxiliairePage() {
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100 font-semibold text-gray-900">Mouvements</div>
-            <div className="max-h-[580px] overflow-auto">
+          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden flex flex-col min-h-0">
+            <div className="px-4 py-3 border-b border-gray-100 font-semibold text-gray-900">
+              Mouvements
+              {(intituleCompteGl || compte) && (
+                <span className="font-normal text-gray-500">
+                  {" : "}
+                  {intituleCompteGl || compte}
+                </span>
+              )}
+            </div>
+            <div className="max-h-[520px] overflow-auto flex-1">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-xs uppercase text-gray-500 border-b border-gray-100">
@@ -363,14 +450,42 @@ export default function GlAuxiliairePage() {
                 </tbody>
               </table>
             </div>
+            {selectedLignes.length > 0 && (
+              <div className="shrink-0 border-t border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-900">
+                <span className="font-medium">{selectedLignes.length} ligne(s) sélectionnée(s)</span>
+                <span className="text-emerald-700"> · Écart : {fcfa(ecartSel)}</span>
+                {ecartSel === 0 && selectionEquilibree && (
+                  <span className="ml-2 inline-flex items-center rounded-full bg-emerald-200/80 px-2 py-0.5 text-xs font-semibold text-emerald-900">
+                    Équilibré
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           <aside className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3">
             <h3 className="font-semibold text-gray-900">Lettrage</h3>
-            <div className="text-sm">
-              <p className="flex justify-between"><span className="text-gray-500">Montant Débit</span><span className="font-semibold">{fcfa(debitSel)}</span></p>
-              <p className="flex justify-between"><span className="text-gray-500">Montant Crédit</span><span className="font-semibold">{fcfa(creditSel)}</span></p>
-              <p className="flex justify-between"><span className="text-gray-500">Écart</span><span className={`font-semibold ${ecartSel === 0 ? "text-emerald-600" : "text-red-600"}`}>{fcfa(ecartSel)}</span></p>
+            <div className="text-sm space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Résumé de la sélection</p>
+              <p className="flex justify-between">
+                <span className="text-gray-500">Montant débit</span>
+                <span className="font-semibold">{fcfa(debitSel)}</span>
+              </p>
+              <p className="flex justify-between">
+                <span className="text-gray-500">Montant crédit</span>
+                <span className="font-semibold">{fcfa(creditSel)}</span>
+              </p>
+              <p className="flex justify-between items-center">
+                <span className="text-gray-500">Écart</span>
+                <span className="flex items-center gap-2">
+                  <span className={`font-semibold ${ecartSel === 0 ? "text-emerald-600" : "text-red-600"}`}>{fcfa(ecartSel)}</span>
+                  {ecartSel === 0 && selectedLignes.length >= 2 && (
+                    <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-full px-2 py-0.5">
+                      Équilibré
+                    </span>
+                  )}
+                </span>
+              </p>
             </div>
             <button
               type="button"
@@ -390,11 +505,23 @@ export default function GlAuxiliairePage() {
               Délettrer
             </button>
             <div className="border-t border-gray-100 pt-3">
-              <p className="text-sm font-semibold text-gray-900 mb-2">Dernières actions de lettrage</p>
-              <ul className="space-y-1 text-xs text-gray-600 max-h-44 overflow-y-auto">
+              <p className="text-sm font-semibold text-gray-900 mb-3">Dernières actions de lettrage</p>
+              <ul className="space-y-2 max-h-52 overflow-y-auto">
                 {audit.slice(0, 8).map(a => (
-                  <li key={a.id}>• {a.action === "GL_AUX_LETTRAGE" ? "Lettrage" : "Délettrage"} — {new Date(a.createdAt).toLocaleString("fr-FR")}</li>
+                  <li key={a.id} className="flex items-start gap-2 text-xs">
+                    <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${auditDotClass(a.action)}`} />
+                    <div className="min-w-0">
+                      <p className="text-gray-800 font-medium">{auditActionLabel(a.action)}</p>
+                      <p className="text-gray-500">
+                        {new Date(a.createdAt).toLocaleDateString("fr-FR")}{" "}
+                        {new Date(a.createdAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                        {" · "}
+                        {a.user?.nomComplet || a.user?.email || "Système"}
+                      </p>
+                    </div>
+                  </li>
                 ))}
+                {audit.length === 0 && <li className="text-xs text-gray-500">Aucune action enregistrée.</li>}
               </ul>
             </div>
           </aside>
@@ -402,12 +529,21 @@ export default function GlAuxiliairePage() {
 
         <div className="sticky bottom-2 mt-4 bg-white rounded-2xl border border-gray-100 p-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-gray-600">
-            <span className="font-medium text-gray-800">Lettrage :</span>{" "}
             {selectedLignes.length === 0
               ? "Cochez des lignes pour lettrer ou délettrer."
               : selectionEquilibree
-                ? "Équilibre débit / crédit OK — vous pouvez lettrer (Appliquer ou bouton ci-dessus)."
-                : "Pour lettrer, la somme des débits doit égaler la somme des crédits sur la sélection. Le délettrage, lui, ne dépend pas de l’équilibre."}
+                ? (
+                  <>
+                    <span className="font-medium text-gray-900">Sélection prête pour lettrage.</span>{" "}
+                    {selectedLignes.length} écriture(s) sélectionnée(s) · Écart = {fcfa(ecartSel)}
+                  </>
+                )
+                : (
+                  <>
+                    <span className="font-medium text-gray-800">Lettrage :</span> la somme des débits doit égaler la somme des crédits.
+                    {" "}({selectedLignes.length} ligne(s) · Écart {fcfa(ecartSel)})
+                  </>
+                )}
           </p>
           <div className="flex gap-2 shrink-0">
             <button type="button" className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50" onClick={() => setSelectedLignes([])}>

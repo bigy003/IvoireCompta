@@ -262,7 +262,7 @@ export default function InscriptionPage() {
 
               <div className="field span2">
                 <label>
-                  NIF — Numéro d&apos;identification fiscale (N° contribuable DGI)
+                  NIF — numéro d&apos;identification fiscale / compte contribuable (NCC DGI-CI)
                   {gestionFacturation ? " *" : " (optionnel)"}
                 </label>
                 <div className="input-wrap">
@@ -272,7 +272,7 @@ export default function InscriptionPage() {
                   </svg>
                   <input
                     type="text"
-                    placeholder="N° contribuable (carte / attestation DGI)"
+                    placeholder="Numéro figurant sur l’attestation ou la carte contribuable DGI"
                     value={nif}
                     onChange={e => setNif(e.target.value)}
                     required={gestionFacturation}

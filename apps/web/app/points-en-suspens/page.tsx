@@ -534,7 +534,10 @@ export default function PointsSuspensPage() {
             <h2 className="text-lg font-bold text-gray-900">Détail du point</h2>
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div><span className="text-gray-500">Client</span><p className="font-medium text-gray-900">{viewRow.clientNom}</p></div>
-              <div><span className="text-gray-500">NCC</span><p className="font-medium text-gray-900">{viewRow.clientNcc}</p></div>
+              <div>
+                <span className="text-gray-500">N° contribuable (NCC)</span>
+                <p className="font-medium text-gray-900">{viewRow.clientNcc}</p>
+              </div>
               <div><span className="text-gray-500">Type</span><p className="font-medium text-gray-900">{TYPE_LABEL[viewRow.type]}</p></div>
               <div><span className="text-gray-500">Priorité</span><p className="font-medium text-gray-900">{PRIORITE_LABEL[viewRow.priorite]}</p></div>
               <div><span className="text-gray-500">Statut</span><p className="font-medium text-gray-900">{STATUT_LABEL[viewRow.statut]}</p></div>

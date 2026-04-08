@@ -611,7 +611,7 @@ export default function DsfPage() {
               type="search"
               value={timelineSearch}
               onChange={e => setTimelineSearch(e.target.value)}
-              placeholder="Rechercher (client, NCC, période, référence)…"
+              placeholder="Rechercher (client, n° contribuable / NCC, période, référence)…"
               className="w-full lg:flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm bg-white"
             />
             <div className="flex flex-wrap gap-2">

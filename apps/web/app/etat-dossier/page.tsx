@@ -164,7 +164,7 @@ export default function EtatDossierPage() {
   function exportCsv() {
     const header = [
       "Client",
-      "NCC",
+      "Numéro contribuable (NCC)",
       "Statut global",
       "Écritures brouillon",
       "Échéances proches",
@@ -259,7 +259,7 @@ export default function EtatDossierPage() {
           </select>
           <input
             type="search"
-            placeholder="Rechercher un client, NCC..."
+            placeholder="Rechercher (client, n° contribuable / NCC)…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="flex-1 rounded-xl border border-gray-200 px-3 py-2.5 text-sm bg-white"
@@ -315,7 +315,7 @@ export default function EtatDossierPage() {
                       <tr key={r.dossierId} className="hover:bg-gray-50/60">
                         <td className="px-4 py-2.5">
                           <p className="font-semibold text-gray-900">{r.clientNom}</p>
-                          <p className="text-xs text-gray-500">NCC : {r.clientNcc}</p>
+                          <p className="text-xs text-gray-500">N° contribuable (NCC) : {r.clientNcc}</p>
                         </td>
                         <td className="px-4 py-2.5">
                           <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${NIVEAU_CLASS[r.statutGlobal]}`}>

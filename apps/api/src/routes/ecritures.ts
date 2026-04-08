@@ -414,15 +414,27 @@ export async function ecritureRoutes(app: FastifyInstance) {
     const totalDebit = mouvements.reduce((s, m) => s + m.debit, 0)
     const totalCredit = mouvements.reduce((s, m) => s + m.credit, 0)
     const letrees = mouvements.filter(m => Boolean(m.lettrage)).length
+    const nonLettresList = mouvements.filter(m => !m.lettrage)
+    const lettresList = mouvements.filter(m => Boolean(m.lettrage))
+    const montantNonLettres = nonLettresList.reduce((s, m) => s + m.debit + m.credit, 0)
+    const montantLettres = lettresList.reduce((s, m) => s + m.debit + m.credit, 0)
+    const pctLettresLignes = mouvements.length === 0 ? 0 : Math.round((letrees * 1000) / mouvements.length) / 10
+    const ligneCompteSel = comptes.find(c => c.compte === compteSelected)
+    const soldeCompteSelectionne = ligneCompteSel?.solde ?? 0
 
     return reply.send({
       comptes,
       compteSelected,
+      intituleCompteSelectionne: ligneCompteSel?.intitule ?? "",
       mouvements,
       stats: {
-        soldeTotal: comptes.reduce((s, c) => s + c.solde, 0),
-        nonLettres: mouvements.length - letrees,
+        soldeTotal: soldeCompteSelectionne,
+        soldeTousComptes: comptes.reduce((s, c) => s + c.solde, 0),
+        nonLettres: nonLettresList.length,
+        montantNonLettres,
         lettres: letrees,
+        montantLettres,
+        pctLettresLignes,
         ecart: Math.abs(totalDebit - totalCredit),
       },
     })
@@ -539,7 +551,25 @@ export async function ecritureRoutes(app: FastifyInstance) {
       take: 20,
       select: { id: true, action: true, createdAt: true, userId: true, donneeApres: true },
     })
-    return reply.send({ audit: rows })
+    const userIds = [...new Set(rows.map(r => r.userId).filter(Boolean) as string[])]
+    const users =
+      userIds.length === 0
+        ? []
+        : await prisma.utilisateur.findMany({
+            where: { id: { in: userIds } },
+            select: { id: true, prenom: true, nom: true, email: true },
+          })
+    const byId = new Map(users.map(u => [u.id, u]))
+    const audit = rows.map(r => ({
+      ...r,
+      user: r.userId
+        ? {
+            nomComplet: `${byId.get(r.userId)?.prenom ?? ""} ${byId.get(r.userId)?.nom ?? ""}`.trim(),
+            email: byId.get(r.userId)?.email ?? null,
+          }
+        : null,
+    }))
+    return reply.send({ audit })
   })
 }
 

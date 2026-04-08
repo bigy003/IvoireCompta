@@ -361,7 +361,7 @@ export default function DsfTableauxPage() {
           <h1 className="text-2xl font-bold text-gray-900">Tableaux DSF (DGI-CI)</h1>
           {meta && (
             <p className="text-gray-600 mt-1">
-              {meta.exercice.clientNom} — NCC {meta.exercice.clientNcc} — Exercice{" "}
+              {meta.exercice.clientNom} — n° contribuable (NCC) {meta.exercice.clientNcc} — Exercice{" "}
               <span className="font-semibold">{meta.exercice.annee}</span>
               {meta.declaration.montantDu && (
                 <>

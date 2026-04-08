@@ -205,7 +205,7 @@ export default function ClientsPage() {
       const msg =
         (e as { response?: { data?: { error?: string } } })?.response?.data?.error ??
         ((e as { response?: { status?: number } })?.response?.status === 409
-          ? "Ce NCC existe déjà."
+          ? "Ce numéro de compte contribuable est déjà utilisé pour un autre client."
           : "Échec de la création.")
       setErr(typeof msg === "string" ? msg : "Erreur.")
     } finally {
@@ -238,7 +238,7 @@ export default function ClientsPage() {
       const msg =
         (e as { response?: { data?: { error?: string } } })?.response?.data?.error ??
         ((e as { response?: { status?: number } })?.response?.status === 409
-          ? "NCC déjà utilisé."
+          ? "Numéro de compte contribuable déjà utilisé."
           : "Échec de la mise à jour.")
       setErr(typeof msg === "string" ? msg : "Erreur.")
     } finally {
@@ -271,16 +271,21 @@ export default function ClientsPage() {
   const formFields = (isEdit: boolean) => (
     <>
       <div>
-        <label className="block text-xs font-medium text-gray-500 mb-1">NCC *</label>
+        <label className="block text-xs font-medium text-gray-500 mb-1">
+          Numéro de compte contribuable <span className="text-red-500">*</span>
+        </label>
         <input
           required
           className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm"
           value={ncc}
           onChange={e => setNcc(e.target.value)}
+          autoComplete="off"
         />
       </div>
       <div>
-        <label className="block text-xs font-medium text-gray-500 mb-1">Raison sociale *</label>
+        <label className="block text-xs font-medium text-gray-500 mb-1">
+          Raison sociale <span className="text-red-500">*</span>
+        </label>
         <input
           required
           className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm"

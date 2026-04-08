@@ -756,13 +756,13 @@ export default function ParametresPage() {
                     <p className="text-xs text-gray-500 mt-0.5">Informations de votre cabinet (lecture seule)</p>
                   </div>
                   <dl className="px-5 py-3">
-                    <Row label="Raison sociale" value={c.nom} />
-                    <Row label="N° d'ordre ONECCA" value={c.numeroOrdre} />
+                    <Row label="Raison sociale (nom du cabinet)" value={c.nom} />
+                    <Row label="N° d&apos;ordre ONECCA" value={c.numeroOrdre} />
                     <Row label="E-mail" value={c.email} />
                     <Row label="Téléphone" value={c.telephone} />
                     <Row label="Adresse" value={c.adresse} />
                     <Row label="RCCM" value={c.rccm} />
-                    <Row label="NIF (NCC)" value={c.ncc} />
+                    <Row label="NIF — n° compte contribuable (NCC)" value={c.ncc} />
                     <Row label="Secteur d'activité" value={c.secteurActivite} />
                     <Row label="Régime fiscal" value={c.regimeFiscal} />
                     <Row label="Plan comptable" value={c.planComptable} />
