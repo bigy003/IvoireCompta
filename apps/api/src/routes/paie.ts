@@ -38,6 +38,12 @@ const EmployePatchSchema = EmployeCreateSchema.omit({ clientId: true, matricule:
   matricule: z.string().min(1).max(48).optional(),
 })
 
+type ControlePaie = {
+  code: string
+  niveau: "BLOQUANT" | "ALERTE"
+  message: string
+}
+
 function totalPrimes(primes: unknown): number {
   const o = (primes as Record<string, number>) ?? {}
   return Object.values(o).reduce((s, v) => s + (Number(v) || 0), 0)
@@ -54,6 +60,62 @@ async function clientDuCabinet(clientId: string, cabinetId: string) {
   })
 }
 
+function endOfMonth(mois: number, annee: number) {
+  return new Date(Date.UTC(annee, mois, 0, 23, 59, 59, 999))
+}
+
+function controlesEmployePaie(
+  employe: {
+    matricule: string
+    nom: string
+    prenom: string
+    salaireBase: { toString(): string }
+    dateEmbauche: Date
+    primes: unknown
+  },
+  mois: number,
+  annee: number
+): ControlePaie[] {
+  const out: ControlePaie[] = []
+  const salaireBase = Number(employe.salaireBase.toString())
+  const eom = endOfMonth(mois, annee)
+  const nomComplet = `${employe.prenom} ${employe.nom}`.trim()
+
+  if (!employe.matricule?.trim()) {
+    out.push({ code: "MATRICULE_MANQUANT", niveau: "BLOQUANT", message: `Matricule manquant pour ${nomComplet}.` })
+  }
+  if (Number.isNaN(salaireBase) || salaireBase <= 0) {
+    out.push({ code: "SALAIRE_BASE_INVALIDE", niveau: "BLOQUANT", message: `Salaire de base invalide pour ${nomComplet}.` })
+  }
+  if (new Date(employe.dateEmbauche).getTime() > eom.getTime()) {
+    out.push({
+      code: "EMBAUCHE_HORS_PERIODE",
+      niveau: "BLOQUANT",
+      message: `${nomComplet} est embauché après la période ${mois}/${annee}.`,
+    })
+  }
+
+  const primes = (employe.primes as Record<string, number>) ?? {}
+  for (const [k, v] of Object.entries(primes)) {
+    if (!Number.isFinite(Number(v))) {
+      out.push({ code: "PRIME_NON_NUMERIQUE", niveau: "BLOQUANT", message: `Prime "${k}" non numérique pour ${nomComplet}.` })
+      continue
+    }
+    if (Number(v) < 0) {
+      out.push({ code: "PRIME_NEGATIVE", niveau: "BLOQUANT", message: `Prime "${k}" négative pour ${nomComplet}.` })
+    }
+  }
+  if (Object.keys(primes).length === 0) {
+    out.push({
+      code: "AUCUNE_PRIME",
+      niveau: "ALERTE",
+      message: `Aucune prime définie pour ${nomComplet} (vérifier si c'est attendu).`,
+    })
+  }
+
+  return out
+}
+
 export async function paieRoutes(app: FastifyInstance) {
 
   /**
@@ -61,7 +123,7 @@ export async function paieRoutes(app: FastifyInstance) {
    * Calcule et sauvegarde un bulletin de paie
    */
   app.post("/bulletins/generer", async (request, reply) => {
-    const user   = request.user as { cabinetId: string }
+    const user   = request.user as { id?: string; cabinetId: string }
     const parsed = BulletinSchema.safeParse(request.body)
     if (!parsed.success) return reply.status(400).send({ erreurs: parsed.error.flatten() })
 
@@ -71,6 +133,14 @@ export async function paieRoutes(app: FastifyInstance) {
       where: { id: data.employeId, client: { cabinetId: user.cabinetId } },
     })
     if (!employe) return reply.status(404).send({ error: "Employé introuvable" })
+    const controles = controlesEmployePaie(employe, data.mois, data.annee)
+    const bloquants = controles.filter(c => c.niveau === "BLOQUANT")
+    if (bloquants.length > 0) {
+      return reply.status(409).send({
+        error: "Contrôles paie bloquants: corrigez la fiche salarié avant génération.",
+        controles,
+      })
+    }
 
     // Vérifier qu'il n'existe pas déjà
     const existant = await prisma.bulletinPaie.findUnique({
@@ -124,6 +194,21 @@ export async function paieRoutes(app: FastifyInstance) {
     const detailJson = JSON.parse(
       JSON.stringify(bulletin, (_k, v) => (typeof v === "bigint" ? v.toString() : v))
     )
+    await prisma.auditLog.create({
+      data: {
+        cabinetId: user.cabinetId,
+        userId: user.id ?? null,
+        action: "PAIE_BULLETIN_GENERE",
+        entite: "bulletins_paie",
+        entiteId: data.employeId,
+        donneeApres: {
+          employeId: data.employeId,
+          mois: data.mois,
+          annee: data.annee,
+          netAPayer: bulletin.netAPayer.toString(),
+        },
+      },
+    })
     return reply.status(201).send({
       bulletin: bulletinSauve,
       detail:   detailJson,
@@ -135,7 +220,7 @@ export async function paieRoutes(app: FastifyInstance) {
    * Récapitulatif CNPS mensuel pour un client (base de déclaration)
    */
   app.post("/recap-cnps", async (request, reply) => {
-    const user  = request.user as { cabinetId: string }
+    const user  = request.user as { id?: string; cabinetId: string }
     const { clientId, mois, annee } = request.body as { clientId: string; mois: number; annee: number }
 
     const bulletins = await prisma.bulletinPaie.findMany({
@@ -172,6 +257,22 @@ export async function paieRoutes(app: FastifyInstance) {
     }))
 
     const recap = calculerRecapCNPS(bulletinsCalc)
+    await prisma.auditLog.create({
+      data: {
+        cabinetId: user.cabinetId,
+        userId: user.id ?? null,
+        action: "PAIE_RECAP_CNPS_GENERE",
+        entite: "paie_recap_cnps",
+        entiteId: `${clientId}:${mois}:${annee}`,
+        donneeApres: {
+          clientId,
+          mois,
+          annee,
+          nbSalaries: recap.nbSalaries,
+          totalBrut: recap.totalBrut.toString(),
+        },
+      },
+    })
 
     return reply.send({
       mois,
@@ -214,7 +315,7 @@ export async function paieRoutes(app: FastifyInstance) {
    * POST /paie/employes
    */
   app.post("/employes", async (request, reply) => {
-    const user   = request.user as { cabinetId: string }
+    const user   = request.user as { id?: string; cabinetId: string }
     const parsed = EmployeCreateSchema.safeParse(request.body)
     if (!parsed.success) return reply.status(400).send({ erreurs: parsed.error.flatten() })
     const d = parsed.data
@@ -241,6 +342,22 @@ export async function paieRoutes(app: FastifyInstance) {
           actif:          d.actif ?? true,
         },
       })
+      await prisma.auditLog.create({
+        data: {
+          cabinetId: user.cabinetId,
+          userId: user.id ?? null,
+          action: "PAIE_EMPLOYE_CREE",
+          entite: "employes",
+          entiteId: employe.id,
+          donneeApres: {
+            clientId: d.clientId,
+            matricule: employe.matricule,
+            nom: employe.nom,
+            prenom: employe.prenom,
+            actif: employe.actif,
+          },
+        },
+      })
       return reply.status(201).send({
         employe: {
           ...employe,
@@ -259,7 +376,7 @@ export async function paieRoutes(app: FastifyInstance) {
    * PATCH /paie/employes/:id
    */
   app.patch("/employes/:id", async (request, reply) => {
-    const user   = request.user as { cabinetId: string }
+    const user   = request.user as { id?: string; cabinetId: string }
     const id     = (request.params as { id: string }).id
     const parsed = EmployePatchSchema.safeParse(request.body)
     if (!parsed.success) return reply.status(400).send({ erreurs: parsed.error.flatten() })
@@ -290,6 +407,21 @@ export async function paieRoutes(app: FastifyInstance) {
 
     try {
       const employe = await prisma.employe.update({ where: { id }, data: data as object })
+      await prisma.auditLog.create({
+        data: {
+          cabinetId: user.cabinetId,
+          userId: user.id ?? null,
+          action: "PAIE_EMPLOYE_MODIFIE",
+          entite: "employes",
+          entiteId: employe.id,
+          donneeApres: {
+            matricule: employe.matricule,
+            nom: employe.nom,
+            prenom: employe.prenom,
+            actif: employe.actif,
+          },
+        },
+      })
       return reply.send({
         employe: {
           ...employe,
@@ -302,6 +434,89 @@ export async function paieRoutes(app: FastifyInstance) {
       if (code === "P2002") return reply.status(409).send({ error: "Matricule déjà utilisé pour ce client" })
       throw e
     }
+  })
+
+  app.get("/historique", async (request, reply) => {
+    const user = request.user as { cabinetId: string }
+    const q = request.query as { clientId?: string; limit?: string }
+    if (!q.clientId) return reply.status(400).send({ error: "clientId requis" })
+    const ok = await clientDuCabinet(q.clientId, user.cabinetId)
+    if (!ok) return reply.status(404).send({ error: "Client introuvable" })
+    const limit = Math.min(200, Math.max(10, parseInt(q.limit ?? "60", 10) || 60))
+
+    const employes = await prisma.employe.findMany({
+      where: { clientId: q.clientId },
+      select: { id: true },
+    })
+    const employeIds = employes.map(e => e.id)
+    const logs = await prisma.auditLog.findMany({
+      where: {
+        cabinetId: user.cabinetId,
+        OR: [
+          { entite: "paie_recap_cnps", entiteId: { startsWith: `${q.clientId}:` } },
+          { entite: "employes", entiteId: { in: employeIds.length ? employeIds : ["__none__"] } },
+          { entite: "bulletins_paie", entiteId: { in: employeIds.length ? employeIds : ["__none__"] } },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      select: { id: true, action: true, entite: true, entiteId: true, donneeApres: true, userId: true, createdAt: true },
+    })
+    return reply.send({ historique: logs })
+  })
+
+  app.get("/export-csv", async (request, reply) => {
+    const user = request.user as { id?: string; cabinetId: string }
+    const q = request.query as { clientId?: string; mois?: string; annee?: string }
+    if (!q.clientId) return reply.status(400).send({ error: "clientId requis" })
+    const mois = Math.min(12, Math.max(1, parseInt(q.mois ?? `${new Date().getMonth() + 1}`, 10) || 1))
+    const annee = parseInt(q.annee ?? `${new Date().getFullYear()}`, 10) || new Date().getFullYear()
+    const ok = await clientDuCabinet(q.clientId, user.cabinetId)
+    if (!ok) return reply.status(404).send({ error: "Client introuvable" })
+
+    const employes = await prisma.employe.findMany({
+      where: { clientId: q.clientId },
+      select: { id: true, matricule: true, nom: true, prenom: true },
+    })
+    const ids = employes.map(e => e.id)
+    const bulletins =
+      ids.length === 0
+        ? []
+        : await prisma.bulletinPaie.findMany({
+            where: { mois, annee, employeId: { in: ids } },
+            orderBy: { createdAt: "asc" },
+          })
+    const mapEmp = new Map(employes.map(e => [e.id, e]))
+    const rows = [
+      ["Matricule", "Nom", "Prenom", "Mois", "Annee", "SalaireBrut", "ITS", "NetAPayer"].join(";"),
+      ...bulletins.map(b => {
+        const e = mapEmp.get(b.employeId)
+        return [
+          e?.matricule ?? "",
+          e?.nom ?? "",
+          e?.prenom ?? "",
+          String(mois),
+          String(annee),
+          b.salaireBrut.toString(),
+          b.impotIts.toString(),
+          b.netAPayer.toString(),
+        ].join(";")
+      }),
+    ]
+    await prisma.auditLog.create({
+      data: {
+        cabinetId: user.cabinetId,
+        userId: user.id ?? null,
+        action: "PAIE_EXPORT_CSV",
+        entite: "paie_export",
+        entiteId: `${q.clientId}:${mois}:${annee}`,
+        donneeApres: { clientId: q.clientId, mois, annee, lignes: bulletins.length },
+      },
+    })
+
+    reply.header("Content-Type", "text/csv; charset=utf-8")
+    reply.header("Content-Disposition", `attachment; filename="paie_${mois}_${annee}.csv"`)
+    return reply.send(rows.join("\n"))
   })
 
   /**
@@ -409,7 +624,16 @@ export async function paieRoutes(app: FastifyInstance) {
           }),
       prisma.employe.findMany({
         where: { clientId: q.clientId, actif: true },
-        select: { id: true, nom: true, prenom: true, matricule: true, poste: true },
+        select: {
+          id: true,
+          nom: true,
+          prenom: true,
+          matricule: true,
+          poste: true,
+          salaireBase: true,
+          dateEmbauche: true,
+          primes: true,
+        },
         orderBy: [{ nom: "asc" }, { prenom: "asc" }],
       }),
     ])
@@ -427,7 +651,18 @@ export async function paieRoutes(app: FastifyInstance) {
         netAPayer:    b.netAPayer.toString(),
         impotIts:     b.impotIts.toString(),
       })),
-      sansBulletin,
+      sansBulletin: sansBulletin.map(e => {
+        const controles = controlesEmployePaie(e, mois, annee)
+        return {
+          id: e.id,
+          nom: e.nom,
+          prenom: e.prenom,
+          matricule: e.matricule,
+          poste: e.poste,
+          controles,
+          bloqueGeneration: controles.some(c => c.niveau === "BLOQUANT"),
+        }
+      }),
     })
   })
 }

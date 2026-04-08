@@ -8,11 +8,13 @@ import { DatePickerFr } from "@/components/date-picker-fr"
 import {
   getClients,
   getPaieEmployes,
+  getPaieHistorique,
   getPaieSynthese,
   getPaiePeriode,
   createPaieEmploye,
   patchPaieEmploye,
   genererBulletinPaie,
+  exportPaieCsv,
   postRecapCnps,
 } from "@/lib/api"
 
@@ -59,6 +61,16 @@ type Synthese = {
   periodesRecentes: { mois: number; annee: number }[]
 }
 
+type PrimeDraft = { id: string; key: string; value: string }
+
+function newPrimeDraft(key = "", value = ""): PrimeDraft {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    key,
+    value,
+  }
+}
+
 function initiales(prenom: string, nom: string) {
   const a = (prenom[0] || "") + (nom[0] || "")
   return a.toUpperCase() || "?"
@@ -99,13 +111,29 @@ export default function PaiePage() {
       netAPayer: string
       impotIts: string
     }[]
-    sansBulletin: { id: string; nom: string; prenom: string; matricule: string; poste: string | null }[]
+    sansBulletin: {
+      id: string
+      nom: string
+      prenom: string
+      matricule: string
+      poste: string | null
+      bloqueGeneration?: boolean
+      controles?: Array<{ code: string; niveau: "BLOQUANT" | "ALERTE"; message: string }>
+    }[]
   } | null>(null)
   const [modalEmploye, setModalEmploye] = useState<"create" | EmployeRow | null>(null)
   const [dateEmbaucheModal, setDateEmbaucheModal] = useState("")
+  const [primesModal, setPrimesModal] = useState<PrimeDraft[]>([])
   const [submitEmp, setSubmitEmp] = useState(false)
   const [genId, setGenId] = useState<string | null>(null)
   const [recapLoading, setRecapLoading] = useState(false)
+  const [controleModal, setControleModal] = useState<{
+    nomComplet: string
+    controles: Array<{ code: string; niveau: "BLOQUANT" | "ALERTE"; message: string }>
+  } | null>(null)
+  const [historique, setHistorique] = useState<
+    Array<{ id: string; action: string; entite: string; entiteId: string; createdAt: string; donneeApres?: unknown }>
+  >([])
 
   const clientCourant = useMemo(() => clients.find(c => c.id === clientId), [clients, clientId])
 
@@ -119,23 +147,43 @@ export default function PaiePage() {
     setLoading(true)
     setErr("")
     try {
-      const [rEmp, rSyn, rPer] = await Promise.all([
+      const [rEmp, rSyn, rPer, rHist] = await Promise.all([
         getPaieEmployes(clientId),
         getPaieSynthese(clientId, mois, annee),
         getPaiePeriode(clientId, mois, annee),
+        getPaieHistorique(clientId, 40),
       ])
       setEmployes(rEmp.data.employes ?? [])
       setSynthese(rSyn.data as Synthese)
       setPeriode(rPer.data)
+      setHistorique(rHist.data.historique ?? [])
     } catch {
       setErr("Impossible de charger les données paie.")
       setEmployes([])
       setSynthese(null)
       setPeriode(null)
+      setHistorique([])
     } finally {
       setLoading(false)
     }
   }, [clientId, mois, annee])
+
+  async function onExportPaieCsv() {
+    if (!clientId) return
+    try {
+      const r = await exportPaieCsv(clientId, mois, annee)
+      const blob = new Blob([r.data], { type: "text/csv;charset=utf-8" })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `paie_${mois}_${annee}.csv`
+      a.click()
+      window.URL.revokeObjectURL(url)
+      setSucces("Export CSV paie téléchargé.")
+    } catch {
+      setErr("Impossible d'exporter le CSV paie.")
+    }
+  }
 
   useEffect(() => {
     if (!Cookies.get("token")) {
@@ -174,6 +222,17 @@ export default function PaiePage() {
     const salaireBase = parseInt(String(fd.get("salaireBase") || "0"), 10)
     const dateEmbauche = dateEmbaucheModal.trim()
     const actif = fd.get("actif") === "on" || fd.get("actif") === "true"
+    const primes: Record<string, number> = {}
+    for (const p of primesModal) {
+      const k = p.key.trim()
+      if (!k) continue
+      const v = parseInt(p.value || "0", 10)
+      if (Number.isNaN(v) || v < 0) {
+        setErr(`Montant invalide pour la prime "${k}".`)
+        return
+      }
+      primes[k] = v
+    }
     if (!matricule || !nom || !prenom || !dateEmbauche || salaireBase < 0) {
       setErr("Champs obligatoires manquants.")
       return
@@ -191,6 +250,7 @@ export default function PaiePage() {
           salaireBase,
           poste,
           actif,
+          primes,
         })
         setSucces("Salarié créé.")
       } else if (modalEmploye && typeof modalEmploye === "object") {
@@ -202,6 +262,7 @@ export default function PaiePage() {
           salaireBase,
           poste,
           actif,
+          primes,
         })
         setSucces("Salarié mis à jour.")
       }
@@ -223,12 +284,19 @@ export default function PaiePage() {
       setSucces("Bulletin généré.")
       await loadData()
     } catch (ex: unknown) {
-      const msg = (ex as { response?: { data?: { error?: string }; status?: number } })?.response?.data?.error
+      const data = (ex as { response?: { data?: { error?: string; controles?: Array<{ message?: string }> }; status?: number } })?.response?.data
+      const msg = data?.error
       const st = (ex as { response?: { status?: number } })?.response?.status
       if (st === 409 && typeof msg === "string" && msg.includes("déjà")) {
         await loadData()
         setSucces("Bulletin déjà enregistré — affichage mis à jour.")
         setGenId(null)
+        return
+      }
+      if (st === 409 && Array.isArray(data?.controles) && data.controles.length > 0) {
+        setErr(`${msg || "Contrôle bloquant"} ${data.controles[0]?.message ? `(${data.controles[0].message})` : ""}`.trim())
+        setGenId(null)
+        await loadData()
         return
       }
       setErr(typeof msg === "string" ? msg : "Génération impossible.")
@@ -265,8 +333,15 @@ export default function PaiePage() {
     if (!modalEmploye) return
     if (modalEmploye === "create") {
       setDateEmbaucheModal(new Date().toISOString().split("T")[0])
+      setPrimesModal([newPrimeDraft("transport", "")])
     } else {
       setDateEmbaucheModal(modalEmploye.dateEmbauche.slice(0, 10))
+      const entries = Object.entries(modalEmploye.primes ?? {})
+      setPrimesModal(
+        entries.length > 0
+          ? entries.map(([key, value]) => newPrimeDraft(key, String(value)))
+          : [newPrimeDraft("transport", "")]
+      )
     }
   }, [modalEmploye])
 
@@ -502,16 +577,42 @@ export default function PaiePage() {
                         <ul className="divide-y divide-amber-100">
                           {periode.sansBulletin.map(s => (
                             <li key={s.id} className="px-5 py-3 flex flex-wrap items-center justify-between gap-2">
-                              <span className="text-gray-800">
-                                {s.prenom} {s.nom} <span className="text-gray-500 text-sm">({s.matricule})</span>
-                              </span>
+                              <div className="min-w-0">
+                                <span className="text-gray-800">
+                                  {s.prenom} {s.nom} <span className="text-gray-500 text-sm">({s.matricule})</span>
+                                </span>
+                                {Array.isArray(s.controles) && s.controles.length > 0 && (
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {s.controles.map((c, idx) => (
+                                      <button
+                                        key={`${s.id}-${c.code}-${idx}`}
+                                        type="button"
+                                        onClick={() =>
+                                          setControleModal({
+                                            nomComplet: `${s.prenom} ${s.nom}`,
+                                            controles: s.controles ?? [],
+                                          })
+                                        }
+                                        className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                          c.niveau === "BLOQUANT"
+                                            ? "bg-red-100 text-red-700"
+                                            : "bg-amber-100 text-amber-700"
+                                        }`}
+                                      >
+                                        {c.niveau === "BLOQUANT" ? "Bloquant" : "Alerte"}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                               <button
                                 type="button"
-                                disabled={genId === s.id}
+                                disabled={genId === s.id || Boolean(s.bloqueGeneration)}
                                 onClick={() => genererBulletin(s.id)}
                                 className="px-3 py-1.5 rounded-lg bg-orange-500 text-white text-xs font-semibold hover:bg-orange-600 disabled:opacity-50"
+                                title={s.bloqueGeneration ? "Corrigez les contrôles bloquants dans la fiche salarié." : "Générer bulletin"}
                               >
-                                {genId === s.id ? "…" : "Générer bulletin"}
+                                {genId === s.id ? "…" : s.bloqueGeneration ? "Bloqué" : "Générer bulletin"}
                               </button>
                             </li>
                           ))}
@@ -520,14 +621,23 @@ export default function PaiePage() {
                     )}
 
                     {synthese?.recapCnpsDisponible && (
-                      <button
-                        type="button"
-                        disabled={recapLoading}
-                        onClick={voirRecap}
-                        className="w-full sm:w-auto px-5 py-3 rounded-xl border-2 border-orange-500 text-orange-600 font-semibold text-sm hover:bg-orange-50 disabled:opacity-50"
-                      >
-                        {recapLoading ? "Calcul…" : "Voir récap CNPS (mensuel)"}
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={recapLoading}
+                          onClick={voirRecap}
+                          className="w-full sm:w-auto px-5 py-3 rounded-xl border-2 border-orange-500 text-orange-600 font-semibold text-sm hover:bg-orange-50 disabled:opacity-50"
+                        >
+                          {recapLoading ? "Calcul…" : "Voir récap CNPS (mensuel)"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={onExportPaieCsv}
+                          className="w-full sm:w-auto px-5 py-3 rounded-xl border border-gray-200 text-gray-700 font-semibold text-sm hover:bg-gray-50"
+                        >
+                          Export CSV paie
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}
@@ -603,6 +713,19 @@ export default function PaiePage() {
                     </div>
                   </div>
                 )}
+                {historique.length > 0 && (
+                  <div className="mt-6 pt-4 border-t border-gray-100">
+                    <div className="text-xs font-semibold text-gray-500 uppercase mb-2">Traçabilité paie</div>
+                    <ul className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {historique.slice(0, 12).map(h => (
+                        <li key={h.id} className="text-xs text-gray-700 bg-gray-50 rounded-lg px-2.5 py-2">
+                          <div className="font-semibold">{h.action}</div>
+                          <div className="text-gray-500">{new Date(h.createdAt).toLocaleString("fr-FR")}</div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </aside>
             </div>
           </>
@@ -669,6 +792,51 @@ export default function PaiePage() {
                 />
               </div>
               <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-medium text-gray-600">Variables de paie (primes mensuelles)</label>
+                  <button
+                    type="button"
+                    onClick={() => setPrimesModal(prev => [...prev, newPrimeDraft("", "")])}
+                    className="text-xs font-semibold text-orange-600 hover:text-orange-700"
+                  >
+                    + Ajouter
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {primesModal.map((p, i) => (
+                    <div key={p.id} className="grid grid-cols-[1fr_120px_auto] gap-2 items-center">
+                      <input
+                        value={p.key}
+                        onChange={e =>
+                          setPrimesModal(prev => prev.map((x, idx) => (idx === i ? { ...x, key: e.target.value } : x)))
+                        }
+                        placeholder="Libellé (ex: transport)"
+                        className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        value={p.value}
+                        onChange={e =>
+                          setPrimesModal(prev => prev.map((x, idx) => (idx === i ? { ...x, value: e.target.value } : x)))
+                        }
+                        placeholder="Montant"
+                        className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setPrimesModal(prev => prev.filter((_, idx) => idx !== i))}
+                        className="px-2 py-2 rounded-lg text-xs text-gray-500 hover:bg-gray-100"
+                        title="Supprimer"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-1 text-[11px] text-gray-500">Exemples: transport, logement, panier, rendement.</p>
+              </div>
+              <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Date d&apos;embauche</label>
                 <DatePickerFr
                   value={dateEmbaucheModal}
@@ -706,6 +874,39 @@ export default function PaiePage() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {controleModal && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 border border-gray-100">
+            <h3 className="text-lg font-bold text-gray-900">Détails des contrôles</h3>
+            <p className="text-sm text-gray-500 mt-1 mb-4">{controleModal.nomComplet}</p>
+            <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
+              {controleModal.controles.map((c, i) => (
+                <div
+                  key={`${c.code}-${i}`}
+                  className={`rounded-lg border px-3 py-2 ${
+                    c.niveau === "BLOQUANT"
+                      ? "border-red-200 bg-red-50 text-red-800"
+                      : "border-amber-200 bg-amber-50 text-amber-800"
+                  }`}
+                >
+                  <div className="text-xs font-semibold mb-0.5">{c.niveau === "BLOQUANT" ? "Bloquant" : "Alerte"}</div>
+                  <div className="text-sm">{c.message}</div>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end mt-4">
+              <button
+                type="button"
+                onClick={() => setControleModal(null)}
+                className="px-4 py-2 rounded-lg bg-orange-500 text-white text-sm font-semibold hover:bg-orange-600"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </Layout>

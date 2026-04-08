@@ -39,6 +39,14 @@ const PaiementSchema = z.object({
   reference: z.string().max(120).optional(),
   commentaire: z.string().max(500).optional(),
 })
+const AvoirPartielSchema = z.object({
+  lignes: z.array(
+    z.object({
+      ordre: z.number().int().min(0),
+      quantite: z.number().positive(),
+    })
+  ).min(1),
+})
 
 function ymd(d: Date) {
   return d.toISOString().slice(0, 10)
@@ -523,6 +531,8 @@ export async function facturationRoutes(app: FastifyInstance) {
   app.post("/:id/avoir", async (request, reply) => {
     const user = request.user as { id: string; cabinetId: string }
     const { id } = request.params as { id: string }
+    const parsed = AvoirPartielSchema.safeParse(request.body ?? {})
+    const selections = parsed.success ? parsed.data.lignes : null
     const facture = await prisma.facture.findFirst({
       where: { id, client: { cabinetId: user.cabinetId } },
       include: { lignes: true },
@@ -532,9 +542,42 @@ export async function facturationRoutes(app: FastifyInstance) {
 
     const annee = new Date().getFullYear()
     const numeroAvoir = await nextNumeroAvoir(user.cabinetId, annee)
-    const sousTotalHt = -Math.abs(Number(facture.sousTotalHt.toString()))
-    const montantTva = -Math.abs(Number(facture.montantTva.toString()))
-    const totalTtc = -Math.abs(Number(facture.totalTtc.toString()))
+    const lignesSource = [...facture.lignes].sort((a, b) => a.ordre - b.ordre)
+    let lignesAvoir = lignesSource.map(l => ({
+      description: l.description,
+      quantite: Number(l.quantite.toString()),
+      prixUnitaireHt: Number(l.prixUnitaireHt.toString()),
+      totalLigneHt: Number(l.totalLigneHt.toString()),
+      ordre: l.ordre,
+    }))
+    if (selections) {
+      const byOrdre = new Map(lignesSource.map(l => [l.ordre, l]))
+      try {
+        lignesAvoir = selections.map(s => {
+        const src = byOrdre.get(s.ordre)
+        if (!src) throw new Error(`Ligne ${s.ordre} introuvable`)
+        const qMax = Number(src.quantite.toString())
+        if (s.quantite > qMax) throw new Error(`Quantité dépasse la ligne ${s.ordre}`)
+        const pu = Number(src.prixUnitaireHt.toString())
+        return {
+          description: src.description,
+          quantite: s.quantite,
+          prixUnitaireHt: pu,
+          totalLigneHt: Math.round(s.quantite * pu),
+          ordre: src.ordre,
+        }
+        })
+      } catch (e: unknown) {
+        return reply.status(400).send({ error: (e as Error).message || "Sélection de lignes invalide." })
+      }
+    }
+    const sousTotalHtPositif = lignesAvoir.reduce((s, l) => s + l.totalLigneHt, 0)
+    const tvaTauxNum = Number(facture.tvaTaux.toString())
+    const montantTvaPositif = Math.round((sousTotalHtPositif * tvaTauxNum) / 100)
+    const totalTtcPositif = sousTotalHtPositif + montantTvaPositif
+    const sousTotalHt = -Math.abs(sousTotalHtPositif)
+    const montantTva = -Math.abs(montantTvaPositif)
+    const totalTtc = -Math.abs(totalTtcPositif)
 
     const avoir = await prisma.facture.create({
       data: {
@@ -544,19 +587,19 @@ export async function facturationRoutes(app: FastifyInstance) {
         dateEmission: new Date(),
         dateEcheance: new Date(),
         statut: "PAYEE",
-        tvaTaux: Number(facture.tvaTaux.toString()),
+        tvaTaux: tvaTauxNum,
         sousTotalHt,
         montantTva,
         totalTtc,
         montantPaye: -totalTtc,
         resteAPayer: 0,
-        notes: `Avoir généré depuis facture ${facture.numero}${facture.notes ? ` — ${facture.notes}` : ""}`,
+        notes: `Avoir ${selections ? "partiel" : "total"} généré depuis facture ${facture.numero}${facture.notes ? ` — ${facture.notes}` : ""}`,
         lignes: {
-          create: facture.lignes.map((l, i) => ({
+          create: lignesAvoir.map((l, i) => ({
             description: `AVOIR - ${l.description}`,
-            quantite: Number(l.quantite.toString()),
-            prixUnitaireHt: -Math.abs(Number(l.prixUnitaireHt.toString())),
-            totalLigneHt: -Math.abs(Number(l.totalLigneHt.toString())),
+            quantite: l.quantite,
+            prixUnitaireHt: -Math.abs(l.prixUnitaireHt),
+            totalLigneHt: -Math.abs(l.totalLigneHt),
             ordre: i,
           })),
         },

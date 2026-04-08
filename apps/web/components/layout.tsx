@@ -52,6 +52,8 @@ export default function Layout({ children }: Props) {
     { label: "Points en suspens", href: "/points-en-suspens" },
     { label: "Clients", href: "/clients" },
     { label: "Écritures", href: "/ecritures" },
+    { label: "Journaux", href: "/journaux" },
+    { label: "Exercices", href: "/ouverture-exercice" },
     { label: "BAL | GL", href: "/bal-gl" },
     { label: "Rapprochement bancaire", href: "/rapprochement-bancaire" },
     { label: "Clôture mensuelle", href: "/cloture-mensuelle" },

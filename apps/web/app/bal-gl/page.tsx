@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Cookies from "js-cookie"
 import Layout from "@/components/layout"
 import { getBalance, getClients, getEcritures, api } from "@/lib/api"
@@ -45,6 +45,7 @@ function fmtDate(iso: string) {
 
 export default function BalGlPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [authLoading, setAuthLoading] = useState(true)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState("")
@@ -74,7 +75,7 @@ export default function BalGlPage() {
     setClients((r.data.clients ?? []) as Client[])
   }
 
-  async function onClientChange(id: string) {
+  async function onClientChange(id: string, preferredExerciceId?: string) {
     setClientId(id)
     setExerciceId("")
     setJournaux([])
@@ -85,7 +86,8 @@ export default function BalGlPage() {
     const re = await api.get(`/exercices?dossierId=${dossierId}`)
     const list = (re.data.exercices ?? []) as Exercice[]
     setExercices(list)
-    if (list[0]?.id) await onExerciceChange(list[0].id)
+    const selected = preferredExerciceId && list.some(x => x.id === preferredExerciceId) ? preferredExerciceId : list[0]?.id
+    if (selected) await onExerciceChange(selected)
   }
 
   async function onExerciceChange(id: string) {
@@ -171,8 +173,21 @@ export default function BalGlPage() {
       return
     }
     setAuthLoading(false)
-    loadClients().catch(() => setErr("Impossible de charger les clients."))
-  }, [router])
+    ;(async () => {
+      try {
+        const r = await getClients()
+        const list = (r.data.clients ?? []) as Client[]
+        setClients(list)
+        const qClientId = searchParams.get("clientId")
+        const qExerciceId = searchParams.get("exerciceId")
+        if (qClientId && list.some(c => c.id === qClientId)) {
+          await onClientChange(qClientId, qExerciceId ?? undefined)
+        }
+      } catch {
+        setErr("Impossible de charger les clients.")
+      }
+    })()
+  }, [router, searchParams])
 
   const balanceFiltered = useMemo(() => {
     let list = balance

@@ -193,6 +193,57 @@ export const genererBulletinPaie = (data: {
 }) => api.post("/paie/bulletins/generer", data)
 export const postRecapCnps = (clientId: string, mois: number, annee: number) =>
   api.post("/paie/recap-cnps", { clientId, mois, annee })
+export const getPaieHistorique = (clientId: string, limit = 60) =>
+  api.get("/paie/historique", { params: { clientId, limit } })
+export const exportPaieCsv = (clientId: string, mois: number, annee: number) =>
+  api.get("/paie/export-csv", { params: { clientId, mois, annee }, responseType: "blob" })
+
+/** Ouverture d'exercice */
+export const checkOuvertureExercice = (data: {
+  dossierId: string
+  exerciceSourceId: string
+  anneeCible: number
+  dateDebut: string
+  dateFin: string
+}) => api.post("/exercices/ouverture/check", data)
+export const openExercice = (data: {
+  dossierId: string
+  exerciceSourceId: string
+  anneeCible: number
+  dateDebut: string
+  dateFin: string
+  options: {
+    reprendreSoldesGeneraux: boolean
+    reprendreSoldesAuxiliaires: boolean
+    creerANouveaux: boolean
+  }
+}) => api.post("/exercices/ouverture", data)
+export const cloturerExercice = (exerciceId: string) =>
+  api.post(`/exercices/${exerciceId}/cloturer`)
+
+/** Journaux */
+export const getJournauxConfig = (exerciceId: string) =>
+  api.get("/journaux", { params: { exerciceId } })
+export const patchJournalConfig = (
+  id: string,
+  data: Partial<{
+    actif: boolean
+    rules: {
+      pieceObligatoire: boolean
+      libelleObligatoire: boolean
+      interdireMontantNul: boolean
+      autoriserBrouillon: boolean
+      comptesAutorisesUniquement: boolean
+      comptesAutorises: string[]
+    }
+  }>
+) => api.patch(`/journaux/${id}/config`, data)
+export const verrouillerJournal = (id: string, periodLabel: string) =>
+  api.post(`/journaux/${id}/verrouiller`, { periodLabel })
+export const deverrouillerJournal = (id: string) =>
+  api.post(`/journaux/${id}/deverrouiller`)
+export const getJournalHistorique = (id: string) =>
+  api.get(`/journaux/${id}/historique`)
 
 /** Rapprochement bancaire */
 export const getRapprochementBancaire = (params: Record<string, string>) =>
@@ -219,6 +270,8 @@ export const rapprocherMouvementBancaire = (data: {
 }) => api.post("/rapprochement-bancaire/match", data)
 export const dissocierMouvementBancaire = (mouvementId: string) =>
   api.post(`/rapprochement-bancaire/unmatch/${mouvementId}`)
+export const ignorerMouvementBancaire = (mouvementId: string, motif: string) =>
+  api.post(`/rapprochement-bancaire/ignore/${mouvementId}`, { motif })
 export const validerRapprochementMois = (data: { exerciceId: string; du: string; au: string }) =>
   api.post("/rapprochement-bancaire/valider-mois", data)
 export const deverrouillerRapprochementMois = (data: { exerciceId: string; du: string; au: string }) =>
@@ -333,8 +386,10 @@ export const addPaiementFacture = (
     commentaire?: string
   }
 ) => api.post(`/facturation/${factureId}/paiements`, data)
-export const createAvoirFacture = (factureId: string) =>
-  api.post(`/facturation/${factureId}/avoir`)
+export const createAvoirFacture = (
+  factureId: string,
+  data?: { lignes: Array<{ ordre: number; quantite: number }> }
+) => api.post(`/facturation/${factureId}/avoir`, data)
 export const getFacturePdfData = (factureId: string) => api.get(`/facturation/${factureId}/pdf`)
 export const previewRelancesFactures = (params?: { clientId?: string }) =>
   api.get("/facturation/relances/preview", { params })

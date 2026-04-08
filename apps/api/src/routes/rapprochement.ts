@@ -31,6 +31,9 @@ const ValiderMoisSchema = z.object({
   du: z.string().min(10),
   au: z.string().min(10),
 })
+const IgnoreSchema = z.object({
+  motif: z.string().min(3).max(400),
+})
 
 function asInt(v: string | number | bigint): number {
   if (typeof v === "number") return v
@@ -54,6 +57,15 @@ function montantBanqueDepuisLignes(
     const c = asInt(typeof l.credit === "string" ? l.credit : l.credit.toString())
     return s + Math.abs(d - c)
   }, 0)
+}
+
+function normText(s: string) {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
 }
 
 export async function rapprochementRoutes(app: FastifyInstance) {
@@ -157,6 +169,45 @@ export async function rapprochementRoutes(app: FastifyInstance) {
         },
       })),
     }))
+    const ids = mouvementsOut.map(m => m.id)
+    const traces = ids.length
+      ? await prisma.auditLog.findMany({
+          where: {
+            cabinetId: user.cabinetId,
+            entite: "mouvements_bancaires",
+            entiteId: { in: ids },
+            action: {
+              in: [
+                "RAPPROCHEMENT_MANUEL",
+                "RAPPROCHEMENT_AUTO",
+                "RAPPROCHEMENT_ANNULE",
+                "MOUVEMENT_IGNORE",
+              ],
+            },
+          },
+          orderBy: { createdAt: "desc" },
+          select: { entiteId: true, action: true, createdAt: true, userId: true, donneeApres: true },
+          take: 3000,
+        })
+      : []
+    const lastTraceByMvt = new Map<string, (typeof traces)[number]>()
+    for (const t of traces) {
+      if (!lastTraceByMvt.has(t.entiteId)) lastTraceByMvt.set(t.entiteId, t)
+    }
+    const mouvementsWithTrace = mouvementsOut.map(m => {
+      const t = lastTraceByMvt.get(m.id)
+      return {
+        ...m,
+        derniereAction: t
+          ? {
+              action: t.action,
+              at: t.createdAt,
+              userId: t.userId,
+              motif: (t.donneeApres as { motif?: string } | null)?.motif ?? null,
+            }
+          : null,
+      }
+    })
 
     const ecrituresOut = ecritures.map(e => {
       const debit = e.lignes.reduce((s, l) => s + asInt(l.debit.toString()), 0)
@@ -191,7 +242,7 @@ export async function rapprochementRoutes(app: FastifyInstance) {
       : null
 
     return reply.send({
-      mouvements: mouvementsOut,
+      mouvements: mouvementsWithTrace,
       ecritures: ecrituresOut,
       stats: {
         mouvements: totalMouvements,
@@ -391,6 +442,20 @@ export async function rapprochementRoutes(app: FastifyInstance) {
         where: { id: data.mouvementId },
         data: { statut: "RAPPROCHE" },
       })
+      await tx.auditLog.create({
+        data: {
+          cabinetId: user.cabinetId,
+          userId: user.id,
+          action: "RAPPROCHEMENT_MANUEL",
+          entite: "mouvements_bancaires",
+          entiteId: data.mouvementId,
+          donneeApres: {
+            ecritureId: data.ecritureId,
+            montantRapproche: (data.montant ?? montantParDefaut),
+            commentaire: data.commentaire ?? null,
+          },
+        },
+      })
       return rapprochement
     })
 
@@ -403,7 +468,7 @@ export async function rapprochementRoutes(app: FastifyInstance) {
   })
 
   app.post("/unmatch/:mouvementId", async (request, reply) => {
-    const user = request.user as { cabinetId: string }
+    const user = request.user as { id: string; cabinetId: string }
     const params = request.params as { mouvementId: string }
 
     const mouvement = await prisma.mouvementBancaire.findFirst({
@@ -420,8 +485,56 @@ export async function rapprochementRoutes(app: FastifyInstance) {
         where: { id: params.mouvementId },
         data: { statut: "NON_RAPPROCHE" },
       }),
+      prisma.auditLog.create({
+        data: {
+          cabinetId: user.cabinetId,
+          userId: user.id,
+          action: "RAPPROCHEMENT_ANNULE",
+          entite: "mouvements_bancaires",
+          entiteId: params.mouvementId,
+          donneeApres: { date: new Date().toISOString() },
+        },
+      }),
     ])
 
+    return reply.send({ ok: true })
+  })
+
+  app.post("/ignore/:mouvementId", async (request, reply) => {
+    const user = request.user as { id: string; cabinetId: string }
+    const params = request.params as { mouvementId: string }
+    const parsed = IgnoreSchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ erreurs: parsed.error.flatten() })
+    const { motif } = parsed.data
+
+    const mouvement = await prisma.mouvementBancaire.findFirst({
+      where: {
+        id: params.mouvementId,
+        exercice: { dossier: { client: { cabinetId: user.cabinetId } } },
+      },
+      include: { rapprochements: { select: { id: true } } },
+    })
+    if (!mouvement) return reply.status(404).send({ error: "Mouvement introuvable" })
+    if (mouvement.rapprochements.length > 0) {
+      return reply.status(409).send({ error: "Impossible d'ignorer un mouvement déjà rapproché. Dissociez-le d'abord." })
+    }
+
+    await prisma.$transaction([
+      prisma.mouvementBancaire.update({
+        where: { id: params.mouvementId },
+        data: { statut: "IGNORE" },
+      }),
+      prisma.auditLog.create({
+        data: {
+          cabinetId: user.cabinetId,
+          userId: user.id,
+          action: "MOUVEMENT_IGNORE",
+          entite: "mouvements_bancaires",
+          entiteId: params.mouvementId,
+          donneeApres: { motif, date: new Date().toISOString() },
+        },
+      }),
+    ])
     return reply.send({ ok: true })
   })
 
@@ -464,7 +577,13 @@ export async function rapprochementRoutes(app: FastifyInstance) {
 
     const candidats = ecritures.map(e => {
       const montant = montantBanqueDepuisLignes(e.lignes)
-      return { id: e.id, date: e.dateOperation, montant, pieceRef: e.pieceRef ?? "", libelle: e.libelle ?? "" }
+      return {
+        id: e.id,
+        date: e.dateOperation,
+        montant,
+        pieceRef: (e.pieceRef ?? "").trim().toLowerCase(),
+        libelle: normText(e.libelle ?? ""),
+      }
     })
     const ecrituresDejaUtilisees = new Set<string>()
 
@@ -475,32 +594,24 @@ export async function rapprochementRoutes(app: FastifyInstance) {
       const reference = (m.reference ?? "").trim().toLowerCase()
       const libelle = (m.libelle ?? "").trim().toLowerCase()
 
-      // 1) Priorité à la référence (pièce) si présente
-      let candidat = reference
-        ? candidats.find(c =>
-            !ecrituresDejaUtilisees.has(c.id) &&
-            c.montant === montantMouvement &&
-            c.pieceRef.trim().toLowerCase() === reference
-          )
-        : undefined
-
-      // 2) Sinon montant + libellé proche + date proche (tolérance élargie)
-      if (!candidat) {
-        candidat = candidats.find(c => {
-          if (ecrituresDejaUtilisees.has(c.id)) return false
-          if (c.montant !== montantMouvement) return false
-          const d = Math.abs(new Date(c.date).getTime() - mDate)
-          const procheDate = d <= 45 * 24 * 60 * 60 * 1000
-          const cLib = c.libelle.trim().toLowerCase()
-          const procheLibelle = libelle.length >= 6 && (cLib.includes(libelle.slice(0, 10)) || libelle.includes(cLib.slice(0, 10)))
-          return procheDate || procheLibelle
+      const refNorm = normText(reference)
+      const libNorm = normText(libelle)
+      const scored = candidats
+        .filter(c => !ecrituresDejaUtilisees.has(c.id))
+        .map(c => {
+          const dateDiffDays = Math.abs(new Date(c.date).getTime() - mDate) / 86400000
+          const amountDiff = Math.abs(c.montant - montantMouvement)
+          const amountTolerance = Math.max(100, Math.round(montantMouvement * 0.01))
+          const amountScore = amountDiff <= amountTolerance ? 50 : amountDiff <= amountTolerance * 3 ? 25 : 0
+          const dateScore = dateDiffDays <= 3 ? 25 : dateDiffDays <= 10 ? 15 : dateDiffDays <= 30 ? 8 : 0
+          const refScore = refNorm && c.pieceRef && (c.pieceRef === reference || normText(c.pieceRef) === refNorm) ? 30 : 0
+          const libScore = libNorm && c.libelle && (c.libelle.includes(libNorm.slice(0, 8)) || libNorm.includes(c.libelle.slice(0, 8))) ? 15 : 0
+          return { c, score: amountScore + dateScore + refScore + libScore }
         })
-      }
+        .sort((a, b) => b.score - a.score)
 
-      // 3) Dernier fallback: montant seul
-      if (!candidat) {
-        candidat = candidats.find(c => !ecrituresDejaUtilisees.has(c.id) && c.montant === montantMouvement)
-      }
+      const best = scored[0]
+      const candidat = best && best.score >= 55 ? best.c : undefined
       if (!candidat) continue
 
       await prisma.$transaction([
@@ -510,12 +621,22 @@ export async function rapprochementRoutes(app: FastifyInstance) {
             ecritureId: candidat.id,
             creeParId: user.id,
             montantRapproche: montantMouvement,
-            commentaire: "Auto-rapprochement (montant + proximité de date)",
+            commentaire: "Auto-rapprochement intelligent (montant/date/ref/libelle)",
           },
         }),
         prisma.mouvementBancaire.update({
           where: { id: m.id },
           data: { statut: "RAPPROCHE" },
+        }),
+        prisma.auditLog.create({
+          data: {
+            cabinetId: user.cabinetId,
+            userId: user.id,
+            action: "RAPPROCHEMENT_AUTO",
+            entite: "mouvements_bancaires",
+            entiteId: m.id,
+            donneeApres: { ecritureId: candidat.id, montant: montantMouvement, date: new Date().toISOString() },
+          },
         }),
       ])
       ecrituresDejaUtilisees.add(candidat.id)

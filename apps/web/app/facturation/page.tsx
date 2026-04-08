@@ -108,6 +108,10 @@ export default function FacturationPage() {
   const [selectedDevisId, setSelectedDevisId] = useState("")
   const selectedDevis = useMemo(() => devis.find(d => d.id === selectedDevisId) ?? null, [devis, selectedDevisId])
   const [printMode, setPrintMode] = useState<"facture" | "devis" | null>(null)
+  const [showAvoirPartiel, setShowAvoirPartiel] = useState(false)
+  const [avoirLignes, setAvoirLignes] = useState<Array<{ ordre: number; description: string; qteMax: number; qteAvoir: string }>>([])
+  const [avoirSaving, setAvoirSaving] = useState(false)
+  const [avoirErr, setAvoirErr] = useState("")
   const [createForm, setCreateForm] = useState({
     clientId: "",
     dateEmission: ymd(new Date()),
@@ -252,6 +256,19 @@ export default function FacturationPage() {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
       setErr(msg || "Échec création devis.")
     }
+  }
+
+  function openAvoirPartiel() {
+    if (!selected) return
+    setAvoirErr("")
+    const rows = (selected.lignes ?? []).map((l, i) => ({
+      ordre: i,
+      description: l.description,
+      qteMax: Number(l.quantite),
+      qteAvoir: "",
+    }))
+    setAvoirLignes(rows)
+    setShowAvoirPartiel(true)
   }
 
   useEffect(() => {
@@ -721,12 +738,92 @@ export default function FacturationPage() {
                   >
                     Générer avoir
                   </button>
+                  <button
+                    className="px-3 py-2 rounded-lg border border-indigo-200 text-indigo-700 text-xs font-semibold disabled:opacity-60"
+                    disabled={selected.numero.startsWith("AV-")}
+                    onClick={openAvoirPartiel}
+                  >
+                    Avoir partiel
+                  </button>
                 </div>
               </div>
             )}
             </div>
           </aside>
         </div>
+
+        {showAvoirPartiel && selected && (
+          <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 border border-gray-100 space-y-3">
+              <h3 className="text-lg font-bold text-gray-900">Avoir partiel - {selected.numero}</h3>
+              <p className="text-sm text-gray-500">Renseigne uniquement les quantites a avoirer. Laisse vide pour ignorer une ligne.</p>
+              {avoirErr && <div className="rounded-xl bg-red-50 border border-red-100 text-red-700 px-3 py-2 text-sm">{avoirErr}</div>}
+              <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                {avoirLignes.map((l, i) => (
+                  <div key={`${l.ordre}-${i}`} className="grid grid-cols-12 gap-2 items-center text-sm border border-gray-100 rounded-xl px-3 py-2">
+                    <div className="col-span-7 text-gray-800">{l.description}</div>
+                    <div className="col-span-2 text-xs text-gray-500">Max {l.qteMax}</div>
+                    <input
+                      className="col-span-3 rounded-lg border border-gray-200 px-2 py-1.5 text-sm"
+                      type="number"
+                      min={0}
+                      max={l.qteMax}
+                      step="0.01"
+                      value={l.qteAvoir}
+                      onChange={e => setAvoirLignes(v => v.map((x, idx) => idx === i ? { ...x, qteAvoir: e.target.value } : x))}
+                      placeholder="Qté"
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-60"
+                  disabled={avoirSaving}
+                  onClick={async () => {
+                    try {
+                      setAvoirErr("")
+                      const lignes = avoirLignes
+                        .map(l => ({ ordre: l.ordre, quantite: Number(l.qteAvoir) }))
+                        .filter(l => Number.isFinite(l.quantite) && l.quantite > 0)
+                      if (lignes.length === 0) {
+                        setAvoirErr("Saisis au moins une quantite > 0.")
+                        return
+                      }
+                      for (const li of lignes) {
+                        const src = avoirLignes.find(x => x.ordre === li.ordre)
+                        if (!src) continue
+                        if (li.quantite > src.qteMax) {
+                          setAvoirErr(`La quantite depasse le maximum pour la ligne "${src.description}".`)
+                          return
+                        }
+                      }
+                      setAvoirSaving(true)
+                      await createAvoirFacture(selected.id, { lignes })
+                      setOk("Avoir partiel cree.")
+                      setShowAvoirPartiel(false)
+                      await actualiser()
+                    } catch (e: unknown) {
+                      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                      setAvoirErr(msg || "Echec creation avoir partiel.")
+                    } finally {
+                      setAvoirSaving(false)
+                    }
+                  }}
+                >
+                  {avoirSaving ? "Creation..." : "Creer l&apos;avoir partiel"}
+                </button>
+                <button
+                  className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm"
+                  disabled={avoirSaving}
+                  onClick={() => setShowAvoirPartiel(false)}
+                >
+                  Annuler
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {selected && printMode === "facture" && (
           <div className="hidden print:block mt-4">

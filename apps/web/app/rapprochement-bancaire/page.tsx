@@ -12,6 +12,7 @@ import {
   dissocierMouvementBancaire,
   getClients,
   getRapprochementBancaire,
+  ignorerMouvementBancaire,
   importerMouvementsBancairesCsv,
   rapprocherMouvementBancaire,
   validerRapprochementMois,
@@ -30,6 +31,7 @@ type Mouvement = {
   statut: "NON_RAPPROCHE" | "A_VERIFIER" | "RAPPROCHE" | "IGNORE"
   net: string
   rapprochements: Array<{ ecritureId: string }>
+  derniereAction?: { action: string; at: string; motif?: string | null } | null
 }
 type Ecriture = {
   id: string
@@ -230,6 +232,23 @@ export default function RapprochementBancairePage() {
     await actualiser()
   }
 
+  async function onIgnorer() {
+    if (!selectedMouvementId) return
+    const motif = window.prompt("Motif d'exception (obligatoire) :")
+    if (!motif || motif.trim().length < 3) {
+      setErr("Motif obligatoire (au moins 3 caractères).")
+      return
+    }
+    try {
+      await ignorerMouvementBancaire(selectedMouvementId, motif.trim())
+      setOk("Mouvement marqué ignoré.")
+      await actualiser()
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+      setErr(msg || "Échec de l'exception.")
+    }
+  }
+
   useEffect(() => {
     if (!Cookies.get("token")) {
       router.push("/login")
@@ -420,6 +439,11 @@ export default function RapprochementBancairePage() {
                         }`}>
                           {m.statut === "RAPPROCHE" ? "Rapproché" : m.statut === "A_VERIFIER" ? "À vérifier" : m.statut === "IGNORE" ? "Ignoré" : "Non rapproché"}
                         </span>
+                        {m.derniereAction?.motif && (
+                          <p className="mt-1 text-[11px] text-amber-700 truncate max-w-[220px] mx-auto" title={m.derniereAction.motif}>
+                            Motif: {m.derniereAction.motif}
+                          </p>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -435,6 +459,7 @@ export default function RapprochementBancairePage() {
               <div className="flex gap-2">
                 <button className="px-3 py-1.5 rounded-lg bg-orange-500 text-white text-xs font-semibold hover:bg-orange-600 disabled:opacity-60" onClick={onRapprocher} disabled={!selectedMouvementId || !selectedEcritureId || stats.verrouille}>Rapprocher</button>
                 <button className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold hover:bg-gray-50 disabled:opacity-60" onClick={onDissocier} disabled={!selectedMouvementId || stats.verrouille}>Dissocier</button>
+                <button className="px-3 py-1.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 text-xs font-semibold hover:bg-amber-100 disabled:opacity-60" onClick={onIgnorer} disabled={!selectedMouvementId || stats.verrouille}>Ignorer</button>
               </div>
             </div>
             <div className="overflow-x-auto">
