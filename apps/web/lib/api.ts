@@ -87,6 +87,43 @@ export const initialiserComptabiliteClient = (id: string) =>
   api.post(`/clients/${id}/initialiser-comptabilite`)
 export const getDashboard = () => api.get("/dashboard")
 export const getEtatDossier = () => api.get("/dashboard/etat-dossier")
+export const getPointsSuspens = (params?: Record<string, string | number>) =>
+  api.get("/points-suspens", { params })
+export const createPointSuspens = (data: {
+  clientId: string
+  sujet: string
+  description?: string
+  type: "ANOMALIE_COMPTABLE" | "PIECE_MANQUANTE" | "DECLARATION" | "BANQUE" | "IMMOBILISATION" | "AUTRE"
+  priorite: "HAUTE" | "MOYENNE" | "BASSE"
+  statut?: "OUVERT" | "EN_COURS" | "BLOQUE" | "RESOLU"
+  responsableUserId?: string | null
+  echeance?: string | null
+}) => api.post("/points-suspens", data)
+export const patchPointSuspens = (
+  id: string,
+  data: Partial<{
+    sujet: string
+    description: string
+    type: "ANOMALIE_COMPTABLE" | "PIECE_MANQUANTE" | "DECLARATION" | "BANQUE" | "IMMOBILISATION" | "AUTRE"
+    priorite: "HAUTE" | "MOYENNE" | "BASSE"
+    statut: "OUVERT" | "EN_COURS" | "BLOQUE" | "RESOLU"
+    responsableUserId: string | null
+    echeance: string | null
+  }>
+) => api.patch(`/points-suspens/${id}`, data)
+export const resoudrePointSuspens = (id: string) => api.post(`/points-suspens/${id}/resoudre`)
+export const getPointsSuspensResponsables = () => api.get("/points-suspens/responsables")
+export const uploadPiecePointSuspens = (
+  id: string,
+  data: { nomOriginal: string; mimeType: string; base64: string }
+) => api.post(`/points-suspens/${id}/pieces`, data)
+export const getPiecesPointSuspens = (id: string) => api.get(`/points-suspens/${id}/pieces`)
+export const viewPiecePointSuspens = (pieceId: string) =>
+  api.get(`/points-suspens/pieces/${pieceId}/view`, { responseType: "blob" })
+export const downloadPiecePointSuspens = (pieceId: string) =>
+  api.get(`/points-suspens/pieces/${pieceId}/download`, { responseType: "blob" })
+export const deletePiecePointSuspens = (pieceId: string) =>
+  api.delete(`/points-suspens/pieces/${pieceId}`)
 export const getEcheances = () => api.get("/declarations/echeances")
 export const getDeclarationsPilotage = () => api.get("/declarations/pilotage")
 export const getHistoriqueDepots = () => api.get("/declarations/historique-depots")

@@ -63,6 +63,9 @@ model Utilisateur {
   paiementsFactures    PaiementFacture[] @relation("PaiementFactureCreePar")
   devisCrees           Devis[] @relation("DevisCreePar")
   immobilisationsCreees Immobilisation[] @relation("ImmobilisationCreePar")
+  pointsSuspensAssignes PointSuspens[] @relation("PointSuspensAssigne")
+  pointsSuspensCrees    PointSuspens[] @relation("PointSuspensCreePar")
+  pointsSuspensResolus  PointSuspens[] @relation("PointSuspensResoluPar")
 
   @@unique([cabinetId, email])
   @@map("utilisateurs")
@@ -114,6 +117,7 @@ model Client {
   factures          Facture[]
   devis             Devis[]
   immobilisations   Immobilisation[]
+  pointsSuspens     PointSuspens[]
 
   @@unique([cabinetId, ncc])
   @@map("clients")
@@ -572,6 +576,48 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+model PointSuspens {
+  id                String   @id @default(uuid())
+  cabinetId         String
+  clientId          String
+  client            Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  sujet             String
+  description       String?
+  type              PointSuspensType
+  priorite          PointSuspensPriorite @default(MOYENNE)
+  statut            PointSuspensStatut @default(OUVERT)
+  responsableUserId String?
+  responsableUser   Utilisateur? @relation("PointSuspensAssigne", fields: [responsableUserId], references: [id], onDelete: SetNull)
+  creeParId         String?
+  creePar           Utilisateur? @relation("PointSuspensCreePar", fields: [creeParId], references: [id], onDelete: SetNull)
+  resoluParId       String?
+  resoluPar         Utilisateur? @relation("PointSuspensResoluPar", fields: [resoluParId], references: [id], onDelete: SetNull)
+  echeance          DateTime?
+  resolvedAt        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  pieces            PointSuspensPiece[]
+
+  @@index([cabinetId, statut, priorite])
+  @@index([clientId, statut])
+  @@map("points_suspens")
+}
+
+model PointSuspensPiece {
+  id             String   @id @default(uuid())
+  pointId        String
+  point          PointSuspens @relation(fields: [pointId], references: [id], onDelete: Cascade)
+  nomOriginal    String
+  mimeType       String
+  tailleOctets   Int
+  cheminStockage String
+  createdAt      DateTime @default(now())
+
+  @@index([pointId, createdAt])
+  @@map("points_suspens_pieces")
+}
+
 // ─────────────────────────────────────────────
 // ENUMS
 // ─────────────────────────────────────────────
@@ -737,6 +783,28 @@ enum StatutImmobilisation {
   EN_SERVICE
   CEDEE
   SORTIE
+}
+
+enum PointSuspensType {
+  ANOMALIE_COMPTABLE
+  PIECE_MANQUANTE
+  DECLARATION
+  BANQUE
+  IMMOBILISATION
+  AUTRE
+}
+
+enum PointSuspensPriorite {
+  HAUTE
+  MOYENNE
+  BASSE
+}
+
+enum PointSuspensStatut {
+  OUVERT
+  EN_COURS
+  BLOQUE
+  RESOLU
 }
 
 enum MethodeAmortissement {
