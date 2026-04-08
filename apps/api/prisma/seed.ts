@@ -9,7 +9,8 @@ import { JOURNAUX_DEF } from "../src/lib/comptabilite-init.js"
 
 const prisma = new PrismaClient()
 
-async function ensureExercice2025(clientId: string) {
+/** Dossier + exercice (année civile) + 6 journaux — idempotent */
+async function ensureExerciceAnnee(clientId: string, annee: number) {
   let dossier = await prisma.dossier.findFirst({
     where: { clientId },
     orderBy: { createdAt: "asc" },
@@ -26,19 +27,19 @@ async function ensureExercice2025(clientId: string) {
   }
 
   let exercice = await prisma.exercice.findFirst({
-    where: { dossierId: dossier.id, annee: 2025 },
+    where: { dossierId: dossier.id, annee },
   })
   if (!exercice) {
     exercice = await prisma.exercice.create({
       data: {
         dossierId: dossier.id,
-        annee: 2025,
-        dateDebut: new Date("2025-01-01"),
-        dateFin: new Date("2025-12-31"),
+        annee,
+        dateDebut: new Date(`${annee}-01-01`),
+        dateFin: new Date(`${annee}-12-31`),
         statut: "OUVERT",
       },
     })
-    console.log(`   → Exercice 2025 créé`)
+    console.log(`   → Exercice ${annee} créé`)
   }
 
   for (const j of JOURNAUX_DEF) {
@@ -50,6 +51,183 @@ async function ensureExercice2025(clientId: string) {
   }
 
   return exercice
+}
+
+/**
+ * Client TESTLONDON + exercice 2027 :
+ * - 401100 : 2 lignes équilibrées (fournisseurs)
+ * - 411100 : 2 lignes équilibrées (clients) — en plus d’un éventuel solde AN
+ * Idempotent par pièce (on ne court-circuite plus tout le bloc si 401 existe déjà).
+ */
+async function ensureTestLondonLettrage2027(cabinetId: string, saisiParId: string, logPrefix = "") {
+  const clientTestLondon = await prisma.client.upsert({
+    where: { cabinetId_ncc: { cabinetId, ncc: "CI-TEST-LONDON" } },
+    update: { nomRaisonSociale: "TESTLONDON" },
+    create: {
+      cabinetId,
+      ncc: "CI-TEST-LONDON",
+      nomRaisonSociale: "TESTLONDON",
+      formeJuridique: "SARL",
+      secteurActivite: "Tests lettrage",
+      regimeImposition: "REEL_NORMAL",
+      assujettitTVA: true,
+      email: "testlondon@example.ci",
+    },
+  })
+  const exerciceLondon2027 = await ensureExerciceAnnee(clientTestLondon.id, 2027)
+
+  const journalAC = await prisma.journal.findFirst({
+    where: { exerciceId: exerciceLondon2027.id, code: "AC" },
+  })
+  const journalBQ = await prisma.journal.findFirst({
+    where: { exerciceId: exerciceLondon2027.id, code: "BQ" },
+  })
+  const journalVT = await prisma.journal.findFirst({
+    where: { exerciceId: exerciceLondon2027.id, code: "VT" },
+  })
+  if (!journalAC || !journalBQ || !journalVT) throw new Error("Journaux manquants TESTLONDON 2027")
+
+  let ajout401 = false
+  const deja401 = await prisma.ecriture.findFirst({
+    where: { exerciceId: exerciceLondon2027.id, pieceRef: "TEST-LETTRAGE-2027-FAC" },
+  })
+  if (!deja401) {
+    await prisma.ecriture.create({
+      data: {
+        exerciceId: exerciceLondon2027.id,
+        journalId: journalAC.id,
+        saisiParId,
+        dateOperation: new Date("2027-03-15"),
+        libelle: "TEST lettrage — Facture fournisseur",
+        pieceRef: "TEST-LETTRAGE-2027-FAC",
+        statut: "VALIDEE",
+        valideeLe: new Date(),
+        lignes: {
+          create: [
+            { compteSyscohada: "602200", libelleCompte: "Achats (test lettrage)", debit: 250_000, credit: 0, ordre: 0 },
+            { compteSyscohada: "401100", libelleCompte: "Fournisseurs — TESTLONDON", debit: 0, credit: 250_000, ordre: 1 },
+          ],
+        },
+      },
+    })
+    await prisma.ecriture.create({
+      data: {
+        exerciceId: exerciceLondon2027.id,
+        journalId: journalBQ.id,
+        saisiParId,
+        dateOperation: new Date("2027-03-20"),
+        libelle: "TEST lettrage — Règlement fournisseur",
+        pieceRef: "TEST-LETTRAGE-2027-REG",
+        statut: "VALIDEE",
+        valideeLe: new Date(),
+        lignes: {
+          create: [
+            { compteSyscohada: "401100", libelleCompte: "Fournisseurs — TESTLONDON", debit: 250_000, credit: 0, ordre: 0 },
+            { compteSyscohada: "521000", libelleCompte: "Banque (test)", debit: 0, credit: 250_000, ordre: 1 },
+          ],
+        },
+      },
+    })
+    ajout401 = true
+  }
+
+  let ajout411 = false
+  const deja411 = await prisma.ecriture.findFirst({
+    where: { exerciceId: exerciceLondon2027.id, pieceRef: "TEST-LETTRAGE-411-VT" },
+  })
+  if (!deja411) {
+    await prisma.ecriture.create({
+      data: {
+        exerciceId: exerciceLondon2027.id,
+        journalId: journalVT.id,
+        saisiParId,
+        dateOperation: new Date("2027-03-18"),
+        libelle: "TEST lettrage — Facture client",
+        pieceRef: "TEST-LETTRAGE-411-VT",
+        statut: "VALIDEE",
+        valideeLe: new Date(),
+        lignes: {
+          create: [
+            { compteSyscohada: "411100", libelleCompte: "Clients — TESTLONDON", debit: 250_000, credit: 0, ordre: 0 },
+            { compteSyscohada: "701000", libelleCompte: "Ventes (test lettrage)", debit: 0, credit: 250_000, ordre: 1 },
+          ],
+        },
+      },
+    })
+    await prisma.ecriture.create({
+      data: {
+        exerciceId: exerciceLondon2027.id,
+        journalId: journalBQ.id,
+        saisiParId,
+        dateOperation: new Date("2027-03-22"),
+        libelle: "TEST lettrage — Encaissement client",
+        pieceRef: "TEST-LETTRAGE-411-ENC",
+        statut: "VALIDEE",
+        valideeLe: new Date(),
+        lignes: {
+          create: [
+            { compteSyscohada: "521000", libelleCompte: "Banque (test)", debit: 250_000, credit: 0, ordre: 0 },
+            { compteSyscohada: "411100", libelleCompte: "Clients — TESTLONDON", debit: 0, credit: 250_000, ordre: 1 },
+          ],
+        },
+      },
+    })
+    ajout411 = true
+  }
+
+  if (ajout401) {
+    console.log(
+      `${logPrefix}   → TESTLONDON 2027 : 401100 démo lettrage (250 000 / 250 000) — GL Fournisseurs`
+    )
+  }
+  if (ajout411) {
+    console.log(
+      `${logPrefix}   → TESTLONDON 2027 : 411100 démo lettrage (250 000 / 250 000) — GL Clients (cocher ces 2 lignes, pas l’AN seul)`
+    )
+  }
+  if (!ajout401 && !ajout411) {
+    console.log(`${logPrefix}⏭️  Démo lettrage TESTLONDON 2027 déjà complète (cabinet ${cabinetId.slice(0, 8)}…)`)
+  }
+}
+
+const BRYAN_EMAIL = "bryan@cabinet.fr"
+/** Mot de passe uniquement si le seed crée ce compte (sinon vous gardez celui de l’inscription). */
+const BRYAN_DEV_PASSWORD = "BryanDev2027!"
+
+/** Compte utilisé pour la démo lettrage TESTLONDON : crée cabinet + expert si l’email n’existe pas encore. */
+async function ensureBryanExpertForLettrageDemo(): Promise<{ id: string; cabinetId: string }> {
+  const existing = await prisma.utilisateur.findFirst({
+    where: { email: BRYAN_EMAIL },
+  })
+  if (existing) {
+    console.log(`✅ Utilisateur ${BRYAN_EMAIL} trouvé (cabinet ${existing.cabinetId.slice(0, 8)}…)`)
+    return { id: existing.id, cabinetId: existing.cabinetId }
+  }
+
+  const cabinetBryan = await prisma.cabinet.upsert({
+    where: { numeroOrdre: "ONECCA-DEV-BRYAN-FR" },
+    update: {},
+    create: {
+      nom: "Cabinet Bryan (dev)",
+      numeroOrdre: "ONECCA-DEV-BRYAN-FR",
+      email: "contact@cabinet.fr",
+      regimeFiscal: "REEL_NORMAL",
+    },
+  })
+  const passwordHash = await bcrypt.hash(BRYAN_DEV_PASSWORD, 10)
+  const u = await prisma.utilisateur.create({
+    data: {
+      cabinetId: cabinetBryan.id,
+      nom: "Bryan",
+      prenom: "Bryan",
+      email: BRYAN_EMAIL,
+      passwordHash,
+      role: "EXPERT_COMPTABLE",
+      numeroOrdre: "ONECCA-DEV-BRYAN-FR",
+    },
+  })
+  console.log(`✅ Compte dev créé : ${BRYAN_EMAIL} / ${BRYAN_DEV_PASSWORD}`)
+  return { id: u.id, cabinetId: u.cabinetId }
 }
 
 async function main() {
@@ -135,8 +313,8 @@ async function main() {
   console.log(`✅ Clients : ${client1.nomRaisonSociale}, ${client2.nomRaisonSociale}`)
 
   console.log("\n📁 Dossiers & exercices 2025 + journaux…")
-  const exerciceBsci = await ensureExercice2025(client1.id)
-  await ensureExercice2025(client2.id)
+  const exerciceBsci = await ensureExerciceAnnee(client1.id, 2025)
+  await ensureExerciceAnnee(client2.id, 2025)
   console.log(`✅ 6 journaux par exercice (AC, VT, BQ, CA, OD, SA)`)
 
   const nbEcritures = await prisma.ecriture.count({ where: { exerciceId: exerciceBsci.id } })
@@ -213,6 +391,10 @@ async function main() {
     console.log(`⏭️  Écritures de démo déjà présentes (${nbEcritures}), skip`)
   }
 
+  console.log("\n📁 TESTLONDON — compte bryan@cabinet.fr uniquement (lettrage 2027)…")
+  const bryanCtx = await ensureBryanExpertForLettrageDemo()
+  await ensureTestLondonLettrage2027(bryanCtx.cabinetId, bryanCtx.id, "   ")
+
   const echeancesSeed = [
     { type: "TVA_MENSUELLE" as const, label: "TVA Janvier 2025", date: new Date("2025-02-15"), periode: "TVA-2025-01" },
     { type: "TVA_MENSUELLE" as const, label: "TVA Février 2025", date: new Date("2025-03-15"), periode: "TVA-2025-02" },
@@ -266,7 +448,9 @@ async function main() {
   console.log("📋 Connexion :")
   console.log("   konan@konan-associes.ci     / IvoireCompta2025!")
   console.log("   collaborateur@konan-associes.ci / Collab2025!")
-  console.log("\n   Page écritures : client « BSCI Sarl », exercice 2025, journal AC.\n")
+  console.log(`   ${BRYAN_EMAIL}  /  mot de passe : celui défini à l’inscription, ou « ${BRYAN_DEV_PASSWORD} » si le seed vient de créer ce compte.`)
+  console.log("\n   Page écritures : client « BSCI Sarl », exercice 2025, journal AC.")
+  console.log(`   Lettrage TESTLONDON : connectez-vous avec ${BRYAN_EMAIL}, ex. 2027 — 401100 ou 411100 (2 lignes démo 250 k).\n`)
 }
 
 main()

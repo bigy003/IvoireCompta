@@ -135,6 +135,20 @@ export const deposerEcheance = (id: string, referenceEimpots: string) =>
 export const getEcritures = (params: Record<string, string>) => api.get("/ecritures", { params })
 export const getBalance   = (exerciceId: string) => api.get("/ecritures/balance", { params: { exerciceId } })
 export const creerEcriture = (data: unknown) => api.post("/ecritures", data)
+export const getGlAuxiliaire = (params: {
+  exerciceId: string
+  type: "CLIENTS" | "FOURNISSEURS"
+  du?: string
+  au?: string
+  search?: string
+  compte?: string
+}) => api.get("/ecritures/auxiliaire", { params })
+export const lettrerGlAuxiliaire = (data: { exerciceId: string; ligneIds: string[] }) =>
+  api.post("/ecritures/auxiliaire/lettrer", data)
+export const delettrerGlAuxiliaire = (data: { exerciceId: string; ligneIds: string[] }) =>
+  api.post("/ecritures/auxiliaire/delettrer", data)
+export const getAuditGlAuxiliaire = (exerciceId: string) =>
+  api.get("/ecritures/auxiliaire/audit", { params: { exerciceId } })
 export const genererDSF   = (exerciceId: string) => api.post("/declarations/dsf/generer", { exerciceId })
 export const getDsfParExercice = (exerciceId: string) =>
   api.get(`/declarations/dsf/exercice/${exerciceId}`)

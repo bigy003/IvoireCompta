@@ -27,6 +27,18 @@ const EcritureSchema = z.object({
   pieceRef:      z.string().max(100).optional(),
   lignes:        z.array(LigneSchema).min(2, "Minimum 2 lignes par écriture"),
 })
+const AuxiliaireQuerySchema = z.object({
+  exerciceId: z.string().uuid(),
+  type: z.enum(["CLIENTS", "FOURNISSEURS"]).default("CLIENTS"),
+  du: z.string().optional(),
+  au: z.string().optional(),
+  search: z.string().optional(),
+  compte: z.string().optional(),
+})
+const LettrageSchema = z.object({
+  exerciceId: z.string().uuid(),
+  ligneIds: z.array(z.string().uuid()).min(2),
+})
 
 // ── Validateurs métier ────────────────────────────────────────
 
@@ -300,6 +312,234 @@ export async function ecritureRoutes(app: FastifyInstance) {
       .sort((a, b) => a.compte.localeCompare(b.compte))
 
     return reply.send({ balance: result })
+  })
+
+  /**
+   * GET /ecritures/auxiliaire?exerciceId=...&type=CLIENTS|FOURNISSEURS
+   */
+  app.get("/auxiliaire", async (request, reply) => {
+    const user = request.user as { cabinetId: string }
+    const parsed = AuxiliaireQuerySchema.safeParse(request.query)
+    if (!parsed.success) return reply.status(400).send({ erreurs: parsed.error.flatten() })
+    const q = parsed.data
+    const prefix = q.type === "CLIENTS" ? "411" : "401"
+    const du = q.du ? new Date(q.du) : undefined
+    const au = q.au ? new Date(`${q.au}T23:59:59`) : undefined
+
+    const lignes = await prisma.ligneEcriture.findMany({
+      where: {
+        compteSyscohada: q.compte ? { startsWith: q.compte } : { startsWith: prefix },
+        ecriture: {
+          exerciceId: q.exerciceId,
+          statut: "VALIDEE",
+          dateOperation: (du || au) ? { gte: du, lte: au } : undefined,
+          OR: q.search
+            ? [
+                { libelle: { contains: q.search, mode: "insensitive" } },
+                { pieceRef: { contains: q.search, mode: "insensitive" } },
+              ]
+            : undefined,
+          exercice: { dossier: { client: { cabinetId: user.cabinetId } } },
+        },
+      },
+      include: {
+        ecriture: {
+          select: {
+            id: true,
+            dateOperation: true,
+            libelle: true,
+            pieceRef: true,
+            journal: { select: { code: true } },
+          },
+        },
+      },
+      orderBy: [{ compteSyscohada: "asc" }, { ecriture: { dateOperation: "asc" } }, { ordre: "asc" }],
+      take: 10000,
+    })
+
+    const compteMap = new Map<string, { compte: string; intitule: string; debit: number; credit: number; nb: number; letrees: number }>()
+    const mvtMap = new Map<string, Array<{
+      id: string
+      ligneId: string
+      date: Date
+      journal: string
+      piece: string | null
+      libelle: string
+      debit: number
+      credit: number
+      lettrage: string | null
+    }>>()
+
+    for (const l of lignes) {
+      const d = Number(l.debit.toString())
+      const c = Number(l.credit.toString())
+      const k = l.compteSyscohada
+      const prev = compteMap.get(k) ?? { compte: k, intitule: l.libelleCompte, debit: 0, credit: 0, nb: 0, letrees: 0 }
+      prev.debit += d
+      prev.credit += c
+      prev.nb += 1
+      if (l.lettrage) prev.letrees += 1
+      compteMap.set(k, prev)
+
+      const arr = mvtMap.get(k) ?? []
+      arr.push({
+        id: `${l.ecriture.id}-${l.id}`,
+        ligneId: l.id,
+        date: l.ecriture.dateOperation,
+        journal: l.ecriture.journal?.code ?? "—",
+        piece: l.ecriture.pieceRef,
+        libelle: l.ecriture.libelle,
+        debit: d,
+        credit: c,
+        lettrage: l.lettrage,
+      })
+      mvtMap.set(k, arr)
+    }
+
+    const comptes = [...compteMap.values()]
+      .map(c => ({
+        ...c,
+        solde: c.debit - c.credit,
+        pctLettre: c.nb === 0 ? 0 : Math.round((c.letrees * 1000) / c.nb) / 10,
+      }))
+      .sort((a, b) => a.compte.localeCompare(b.compte))
+
+    const compteSelected = q.compte && mvtMap.has(q.compte) ? q.compte : (comptes[0]?.compte ?? "")
+    const mouvementsBruts = mvtMap.get(compteSelected) ?? []
+    let solde = 0
+    const mouvements = mouvementsBruts.map(m => {
+      solde += m.debit - m.credit
+      return { ...m, soldeCumule: solde }
+    })
+    const totalDebit = mouvements.reduce((s, m) => s + m.debit, 0)
+    const totalCredit = mouvements.reduce((s, m) => s + m.credit, 0)
+    const letrees = mouvements.filter(m => Boolean(m.lettrage)).length
+
+    return reply.send({
+      comptes,
+      compteSelected,
+      mouvements,
+      stats: {
+        soldeTotal: comptes.reduce((s, c) => s + c.solde, 0),
+        nonLettres: mouvements.length - letrees,
+        lettres: letrees,
+        ecart: Math.abs(totalDebit - totalCredit),
+      },
+    })
+  })
+
+  app.post("/auxiliaire/lettrer", async (request, reply) => {
+    const user = request.user as { id: string; cabinetId: string }
+    const parsed = LettrageSchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ erreurs: parsed.error.flatten() })
+    const data = parsed.data
+
+    const lignes = await prisma.ligneEcriture.findMany({
+      where: {
+        id: { in: data.ligneIds },
+        ecriture: {
+          exerciceId: data.exerciceId,
+          exercice: { dossier: { client: { cabinetId: user.cabinetId } } },
+        },
+      },
+      include: { ecriture: { select: { id: true } } },
+    })
+    if (lignes.length !== data.ligneIds.length) return reply.status(404).send({ error: "Certaines lignes sont introuvables." })
+
+    const debit = lignes.reduce((s, l) => s + Number(l.debit.toString()), 0)
+    const credit = lignes.reduce((s, l) => s + Number(l.credit.toString()), 0)
+    if (debit !== credit) return reply.status(409).send({ error: "Lettrage impossible: Débit et Crédit sélectionnés ne sont pas équilibrés." })
+
+    const existing = await prisma.ligneEcriture.findMany({
+      where: {
+        lettrage: { not: null },
+        ecriture: {
+          exerciceId: data.exerciceId,
+          exercice: { dossier: { client: { cabinetId: user.cabinetId } } },
+        },
+      },
+      select: { lettrage: true },
+      take: 5000,
+    })
+    const maxCode = existing.reduce((m, x) => {
+      const v = (x.lettrage ?? "").match(/^A(\d+)$/)
+      if (!v) return m
+      return Math.max(m, parseInt(v[1], 10))
+    }, 0)
+    const code = `A${String(maxCode + 1).padStart(3, "0")}`
+
+    await prisma.$transaction([
+      prisma.ligneEcriture.updateMany({
+        where: { id: { in: data.ligneIds } },
+        data: { lettrage: code },
+      }),
+      prisma.auditLog.create({
+        data: {
+          cabinetId: user.cabinetId,
+          userId: user.id,
+          action: "GL_AUX_LETTRAGE",
+          entite: "lignes_ecriture",
+          entiteId: data.exerciceId,
+          donneeApres: { code, ligneIds: data.ligneIds, debit, credit },
+        },
+      }),
+    ])
+    return reply.send({ ok: true, code })
+  })
+
+  app.post("/auxiliaire/delettrer", async (request, reply) => {
+    const user = request.user as { id: string; cabinetId: string }
+    const parsed = LettrageSchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ erreurs: parsed.error.flatten() })
+    const data = parsed.data
+
+    const lignes = await prisma.ligneEcriture.findMany({
+      where: {
+        id: { in: data.ligneIds },
+        ecriture: {
+          exerciceId: data.exerciceId,
+          exercice: { dossier: { client: { cabinetId: user.cabinetId } } },
+        },
+      },
+      select: { id: true },
+    })
+    if (lignes.length !== data.ligneIds.length) return reply.status(404).send({ error: "Certaines lignes sont introuvables." })
+
+    await prisma.$transaction([
+      prisma.ligneEcriture.updateMany({
+        where: { id: { in: data.ligneIds } },
+        data: { lettrage: null },
+      }),
+      prisma.auditLog.create({
+        data: {
+          cabinetId: user.cabinetId,
+          userId: user.id,
+          action: "GL_AUX_DELETTRAGE",
+          entite: "lignes_ecriture",
+          entiteId: data.exerciceId,
+          donneeApres: { ligneIds: data.ligneIds },
+        },
+      }),
+    ])
+    return reply.send({ ok: true })
+  })
+
+  app.get("/auxiliaire/audit", async (request, reply) => {
+    const user = request.user as { cabinetId: string }
+    const q = request.query as { exerciceId?: string }
+    if (!q.exerciceId) return reply.status(400).send({ error: "exerciceId requis" })
+    const rows = await prisma.auditLog.findMany({
+      where: {
+        cabinetId: user.cabinetId,
+        entite: "lignes_ecriture",
+        entiteId: q.exerciceId,
+        action: { in: ["GL_AUX_LETTRAGE", "GL_AUX_DELETTRAGE"] },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      select: { id: true, action: true, createdAt: true, userId: true, donneeApres: true },
+    })
+    return reply.send({ audit: rows })
   })
 }
 

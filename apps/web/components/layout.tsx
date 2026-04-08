@@ -55,6 +55,7 @@ export default function Layout({ children }: Props) {
     { label: "Journaux", href: "/journaux" },
     { label: "Exercices", href: "/ouverture-exercice" },
     { label: "BAL | GL", href: "/bal-gl" },
+    { label: "GL auxiliaire", href: "/gl-auxiliaire" },
     { label: "Rapprochement bancaire", href: "/rapprochement-bancaire" },
     { label: "Clôture mensuelle", href: "/cloture-mensuelle" },
     { label: "Facturation", href: "/facturation" },
