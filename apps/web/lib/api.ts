@@ -86,6 +86,7 @@ export const getClient  = (id: string) => api.get(`/clients/${id}`)
 export const initialiserComptabiliteClient = (id: string) =>
   api.post(`/clients/${id}/initialiser-comptabilite`)
 export const getDashboard = () => api.get("/dashboard")
+export const getEtatDossier = () => api.get("/dashboard/etat-dossier")
 export const getEcheances = () => api.get("/declarations/echeances")
 export const getDeclarationsPilotage = () => api.get("/declarations/pilotage")
 export const getHistoriqueDepots = () => api.get("/declarations/historique-depots")

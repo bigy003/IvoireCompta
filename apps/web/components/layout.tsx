@@ -48,6 +48,7 @@ export default function Layout({ children }: Props) {
 
   const navItems = [
     { label: "Tableau de Bord", href: "/dashboard" },
+    { label: "État du dossier", href: "/etat-dossier" },
     { label: "Clients", href: "/clients" },
     { label: "Écritures", href: "/ecritures" },
     { label: "BAL | GL", href: "/bal-gl" },
