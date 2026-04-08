@@ -419,16 +419,6 @@ export default function PaiePage() {
                   <div className="text-xs font-semibold text-gray-500 uppercase">Salariés actifs</div>
                   <div className="text-lg font-bold text-gray-900 mt-1">{synthese?.nbEmployesActifs ?? "—"}</div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTab("declarations")
-                    setSucces("Générez les bulletins manquants, puis ouvrez le récap CNPS.")
-                  }}
-                  className="self-center px-5 py-3 rounded-xl bg-orange-500 text-white text-sm font-semibold hover:bg-orange-600 shadow-sm whitespace-nowrap"
-                >
-                  + Nouvelle déclaration paie
-                </button>
               </div>
             </div>
 

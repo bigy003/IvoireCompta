@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Cookies from "js-cookie"
 import Layout from "@/components/layout"
+import { DatePickerFr } from "@/components/date-picker-fr"
 import { getBalance, getClients, getEcritures, api } from "@/lib/api"
 
 type Client = { id: string; nomRaisonSociale: string }
@@ -111,7 +112,7 @@ export default function BalGlPage() {
     setJournalCode("")
   }
 
-  async function actualiser() {
+  async function actualiser(compteGlExplicit?: string) {
     if (!exerciceId) return
     setLoading(true)
     setErr("")
@@ -120,7 +121,10 @@ export default function BalGlPage() {
       const rb = await getBalance(exerciceId)
       const bal = (rb.data.balance ?? []) as BalanceRow[]
       setBalance(bal)
-      const compteSelectionne = glCompte || bal[0]?.compte || ""
+      const compteSelectionne =
+        compteGlExplicit !== undefined && compteGlExplicit !== ""
+          ? compteGlExplicit
+          : glCompte || bal[0]?.compte || ""
       setGlCompte(compteSelectionne)
       if (compteSelectionne) {
         const isAllAccounts = compteSelectionne === GL_ALL_ACCOUNTS
@@ -218,6 +222,13 @@ export default function BalGlPage() {
 
   const comptesSansMvt = balance.filter(r => n(r.debit) === 0 && n(r.credit) === 0).length
   const ecrituresNonValidees = 0 // MVP: endpoint dédié ultérieurement
+
+  const anneeExercice = useMemo(
+    () => exercices.find(e => e.id === exerciceId)?.annee ?? null,
+    [exercices, exerciceId]
+  )
+  const yearPickerFrom = anneeExercice != null ? anneeExercice - 1 : 1990
+  const yearPickerTo = anneeExercice != null ? anneeExercice + 1 : 2100
 
   function exportCsv() {
     const rows =
@@ -333,8 +344,22 @@ export default function BalGlPage() {
               <option value="">Exercice</option>
               {exercices.map(e => <option key={e.id} value={e.id}>{e.annee}</option>)}
             </select>
-            <input type="date" className="rounded-xl border border-gray-200 px-3 py-2.5 text-sm" value={du} onChange={e => setDu(e.target.value)} />
-            <input type="date" className="rounded-xl border border-gray-200 px-3 py-2.5 text-sm" value={au} onChange={e => setAu(e.target.value)} />
+            <DatePickerFr
+              value={du}
+              onChange={setDu}
+              placeholder="Du"
+              fromYear={yearPickerFrom}
+              toYear={yearPickerTo}
+              className="w-full min-w-0"
+            />
+            <DatePickerFr
+              value={au}
+              onChange={setAu}
+              placeholder="Au"
+              fromYear={yearPickerFrom}
+              toYear={yearPickerTo}
+              className="w-full min-w-0"
+            />
           </div>
           <div className="flex flex-wrap gap-2">
             <select className="rounded-xl border border-gray-200 px-3 py-2.5 text-sm" value={journalCode} onChange={e => setJournalCode(e.target.value)}>
@@ -414,7 +439,15 @@ export default function BalGlPage() {
                             </span>
                           </td>
                           <td className="py-2.5 text-center">
-                            <button className="px-2.5 py-1 rounded-lg border border-gray-200 text-xs hover:border-orange-300" onClick={() => { setGlCompte(r.compte); setTab("GL"); actualiser() }}>
+                            <button
+                              type="button"
+                              className="px-2.5 py-1 rounded-lg border border-gray-200 text-xs hover:border-orange-300"
+                              onClick={() => {
+                                setGlCompte(r.compte)
+                                setTab("GL")
+                                void actualiser(r.compte)
+                              }}
+                            >
                               Voir GL
                             </button>
                           </td>
@@ -444,7 +477,9 @@ export default function BalGlPage() {
                     <option value={GL_ALL_ACCOUNTS}>Tous les comptes</option>
                     {balance.map(r => <option key={r.compte} value={r.compte}>{r.compte} — {r.libelle}</option>)}
                   </select>
-                  <button className="px-3 py-2 rounded-lg border border-gray-200 text-sm" onClick={actualiser}>Charger</button>
+                  <button type="button" className="px-3 py-2 rounded-lg border border-gray-200 text-sm" onClick={() => void actualiser()}>
+                    Charger
+                  </button>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
