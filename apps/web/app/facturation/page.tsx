@@ -8,6 +8,7 @@ import { DatePickerFr } from "@/components/date-picker-fr"
 import {
   addPaiementFacture,
   api,
+  createAvoirFacture,
   createFacture,
   createDevis,
   convertirDevisEnFacture,
@@ -565,7 +566,7 @@ export default function FacturationPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-4">
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-4 items-start">
           <div className="bg-white/95 rounded-2xl border border-gray-100 overflow-hidden no-print">
             <div className="px-4 py-3 border-b border-gray-100 font-semibold text-gray-900">Liste des factures</div>
             <div className="overflow-x-auto">
@@ -631,7 +632,7 @@ export default function FacturationPage() {
                 </div>
                 <div className="rounded-xl border border-gray-100 bg-white p-3 space-y-1">
                   <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">Lignes</p>
-                  {selected.lignes.map((l, i) => (
+                  {(selected.lignes ?? []).map((l, i) => (
                     <p key={i} className="text-xs text-gray-600">{l.description} — {l.quantite} x {fcfa(n(l.prixUnitaireHt))}</p>
                   ))}
                 </div>
@@ -703,6 +704,23 @@ export default function FacturationPage() {
                   >
                     Exporter PDF
                   </button>
+                  <button
+                    className="px-3 py-2 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-semibold disabled:opacity-60"
+                    disabled={selected.numero.startsWith("AV-")}
+                    onClick={async () => {
+                      if (!confirm(`Créer un avoir total pour ${selected.numero} ?`)) return
+                      try {
+                        await createAvoirFacture(selected.id)
+                        setOk("Avoir créé.")
+                        await actualiser()
+                      } catch (e: unknown) {
+                        const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                        setErr(msg || "Échec création avoir.")
+                      }
+                    }}
+                  >
+                    Générer avoir
+                  </button>
                 </div>
               </div>
             )}
@@ -745,7 +763,7 @@ export default function FacturationPage() {
                 </tr>
               </thead>
               <tbody>
-                {selected.lignes.map((l, i) => (
+                {(selected.lignes ?? []).map((l, i) => (
                   <tr key={`print-l-${i}`} className="border-b border-gray-100">
                     <td className="py-2 px-2">{l.description}</td>
                     <td className="py-2 px-2 text-right">{l.quantite}</td>

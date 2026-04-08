@@ -234,6 +234,24 @@ export const validerClotureMensuelle = (data: {
   commentaire: string
   confirmation: boolean
 }) => api.post("/cloture-mensuelle/valider", data)
+export const soumettreClotureMensuelle = (data: {
+  exerciceId: string
+  mois: number
+  annee: number
+  commentaire?: string
+}) => api.post("/cloture-mensuelle/soumettre-revue", data)
+export const approuverClotureMensuelle = (data: {
+  exerciceId: string
+  mois: number
+  annee: number
+  commentaire?: string
+}) => api.post("/cloture-mensuelle/approuver", data)
+export const rejeterClotureMensuelle = (data: {
+  exerciceId: string
+  mois: number
+  annee: number
+  commentaire?: string
+}) => api.post("/cloture-mensuelle/rejeter", data)
 export const deverrouillerClotureMensuelle = (data: { exerciceId: string; mois: number; annee: number }) =>
   api.post("/cloture-mensuelle/deverrouiller", data)
 
@@ -244,6 +262,12 @@ export const validerTvaMensuelle = (data: { exerciceId: string; mois: number; an
   api.post("/tva/valider", data)
 export const deverrouillerTvaMensuelle = (data: { exerciceId: string; mois: number; annee: number }) =>
   api.post("/tva/deverrouiller", data)
+export const deposerTvaMensuelle = (data: {
+  exerciceId: string
+  mois: number
+  annee: number
+  referenceEimpots: string
+}) => api.post("/tva/deposer", data)
 
 /** Immobilisations */
 export const getImmobilisations = (params: Record<string, string>) => api.get("/immobilisations", { params })
@@ -309,6 +333,8 @@ export const addPaiementFacture = (
     commentaire?: string
   }
 ) => api.post(`/facturation/${factureId}/paiements`, data)
+export const createAvoirFacture = (factureId: string) =>
+  api.post(`/facturation/${factureId}/avoir`)
 export const getFacturePdfData = (factureId: string) => api.get(`/facturation/${factureId}/pdf`)
 export const previewRelancesFactures = (params?: { clientId?: string }) =>
   api.get("/facturation/relances/preview", { params })

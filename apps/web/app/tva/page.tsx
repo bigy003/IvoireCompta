@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import Cookies from "js-cookie"
 import Layout from "@/components/layout"
-import { api, deverrouillerTvaMensuelle, getClients, getTvaMensuelle, validerTvaMensuelle } from "@/lib/api"
+import { api, deposerTvaMensuelle, deverrouillerTvaMensuelle, getClients, getTvaMensuelle, validerTvaMensuelle } from "@/lib/api"
 
 type Client = { id: string; nomRaisonSociale: string }
 type Exercice = { id: string; annee: number }
@@ -65,6 +65,14 @@ export default function TvaPage() {
   const [annee, setAnnee] = useState<number>(new Date().getFullYear())
   const [verrouille, setVerrouille] = useState(false)
   const [historique, setHistorique] = useState<Array<{ action: string; createdAt: string }>>([])
+  const [controles, setControles] = useState<Array<{ code: string; label: string; ok: boolean; detail: string }>>([])
+  const [depot, setDepot] = useState<{ echeanceId: string | null; statut: string | null; dateDepot: string | null; referenceEimpots: string | null }>({
+    echeanceId: null,
+    statut: null,
+    dateDepot: null,
+    referenceEimpots: null,
+  })
+  const [referenceEimpots, setReferenceEimpots] = useState("")
   const [kpi, setKpi] = useState({
     baseCollecteeHt: "0",
     tvaCollectee: "0",
@@ -107,6 +115,15 @@ export default function TvaPage() {
       setKpi(r.data.kpi ?? kpi)
       setVerrouille(Boolean(r.data.verrouille))
       setHistorique((r.data.historique ?? []) as Array<{ action: string; createdAt: string }>)
+      setControles((r.data.controles ?? []) as Array<{ code: string; label: string; ok: boolean; detail: string }>)
+      const d = (r.data.depot ?? { echeanceId: null, statut: null, dateDepot: null, referenceEimpots: null }) as {
+        echeanceId: string | null
+        statut: string | null
+        dateDepot: string | null
+        referenceEimpots: string | null
+      }
+      setDepot(d)
+      setReferenceEimpots(d.referenceEimpots ?? "")
       if (r.data.client?.nomRaisonSociale) setClientNom(String(r.data.client.nomRaisonSociale))
       setOk("Synthèse TVA actualisée.")
     } catch (e: unknown) {
@@ -237,6 +254,30 @@ export default function TvaPage() {
               >
                 Valider la déclaration TVA
               </button>
+              <input
+                className="rounded-xl border border-gray-200 px-3 py-2 text-sm min-w-[220px]"
+                placeholder="Réf e-impôts (ex: TVA-2026-04-001)"
+                value={referenceEimpots}
+                onChange={e => setReferenceEimpots(e.target.value)}
+                disabled={!verrouille || depot.statut === "FAITE"}
+              />
+              <button
+                className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-60"
+                disabled={!exerciceId || !verrouille || depot.statut === "FAITE" || referenceEimpots.trim().length < 3}
+                onClick={async () => {
+                  try {
+                    setErr("")
+                    await deposerTvaMensuelle({ exerciceId, mois, annee, referenceEimpots: referenceEimpots.trim() })
+                    setOk("TVA déposée (mode dev local).")
+                    await actualiser()
+                  } catch (e: unknown) {
+                    const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                    setErr(msg || "Échec du dépôt TVA.")
+                  }
+                }}
+              >
+                Déposer (e-impôts)
+              </button>
               {verrouille && canUnlock && (
                 <button
                   className="px-4 py-2 rounded-xl border border-orange-200 bg-orange-50 text-orange-700 text-sm font-semibold hover:bg-orange-100"
@@ -258,6 +299,9 @@ export default function TvaPage() {
               <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${verrouille ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-700"}`}>
                 {verrouille ? "Validée" : "Non validée"}
               </span>
+              <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${depot.statut === "FAITE" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                {depot.statut === "FAITE" ? `Déposée${depot.referenceEimpots ? ` (${depot.referenceEimpots})` : ""}` : "Non déposée"}
+              </span>
             </div>
           </div>
         </div>
@@ -270,7 +314,8 @@ export default function TvaPage() {
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-4">
-          <div className="bg-white/95 rounded-2xl border border-gray-100 p-4 no-print">
+          <div className="space-y-4">
+            <div className="bg-white/95 rounded-2xl border border-gray-100 p-4 no-print">
             <h3 className="font-bold text-gray-900 mb-3">Synthèse TVA de la période</h3>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -283,6 +328,24 @@ export default function TvaPage() {
                   <tr><td className="py-2 text-gray-600">Total TTC collecté</td><td className="py-2 text-right font-semibold">{fcfa(n(kpi.ttcCollecte))}</td></tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+            <div className="bg-white/95 rounded-2xl border border-gray-100 p-4 no-print">
+              <h3 className="font-bold text-gray-900 mb-3">Contrôles de cohérence</h3>
+              <div className="space-y-2">
+                {controles.map(c => (
+                  <div key={c.code} className="flex items-start justify-between rounded-xl border border-gray-100 px-3 py-2 gap-3">
+                    <div>
+                      <p className="text-sm text-gray-800">{c.label}</p>
+                      <p className="text-xs text-gray-500">{c.detail}</p>
+                    </div>
+                    <span className={`text-xs font-semibold ${c.ok ? "text-emerald-700" : "text-red-700"}`}>
+                      {c.ok ? "OK" : "À vérifier"}
+                    </span>
+                  </div>
+                ))}
+                {controles.length === 0 && <p className="text-sm text-gray-500">Aucun contrôle disponible.</p>}
+              </div>
             </div>
           </div>
           <aside className="bg-white/95 rounded-2xl border border-gray-100 p-4 no-print self-start h-fit">

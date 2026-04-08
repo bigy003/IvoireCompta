@@ -1,5 +1,5 @@
 import { FastifyInstance } from "fastify"
-import { PrismaClient } from "@prisma/client"
+import { Prisma, PrismaClient, StatutFacture } from "@prisma/client"
 import { z } from "zod"
 
 const prisma = new PrismaClient()
@@ -42,6 +42,42 @@ const PaiementSchema = z.object({
 
 function ymd(d: Date) {
   return d.toISOString().slice(0, 10)
+}
+
+async function nextNumeroFacture(cabinetId: string, annee: number) {
+  const prefix = `${annee}-`
+  const last = await prisma.facture.findFirst({
+    where: { client: { cabinetId }, numero: { startsWith: prefix } },
+    orderBy: { numero: "desc" },
+    select: { numero: true },
+  })
+  const lastSeq = last ? Number(last.numero.slice(prefix.length)) : 0
+  const seq = Number.isFinite(lastSeq) ? lastSeq + 1 : 1
+  return `${prefix}${String(seq).padStart(4, "0")}`
+}
+
+async function nextNumeroDevis(cabinetId: string, annee: number) {
+  const prefix = `DEV-${annee}-`
+  const last = await prisma.devis.findFirst({
+    where: { client: { cabinetId }, numero: { startsWith: prefix } },
+    orderBy: { numero: "desc" },
+    select: { numero: true },
+  })
+  const lastSeq = last ? Number(last.numero.slice(prefix.length)) : 0
+  const seq = Number.isFinite(lastSeq) ? lastSeq + 1 : 1
+  return `${prefix}${String(seq).padStart(4, "0")}`
+}
+
+async function nextNumeroAvoir(cabinetId: string, annee: number) {
+  const prefix = `AV-${annee}-`
+  const last = await prisma.facture.findFirst({
+    where: { client: { cabinetId }, numero: { startsWith: prefix } },
+    orderBy: { numero: "desc" },
+    select: { numero: true },
+  })
+  const lastSeq = last ? Number(last.numero.slice(prefix.length)) : 0
+  const seq = Number.isFinite(lastSeq) ? lastSeq + 1 : 1
+  return `${prefix}${String(seq).padStart(4, "0")}`
 }
 
 export async function facturationRoutes(app: FastifyInstance) {
@@ -104,9 +140,7 @@ export async function facturationRoutes(app: FastifyInstance) {
     const client = await prisma.client.findFirst({ where: { id: body.clientId, cabinetId: user.cabinetId } })
     if (!client) return reply.status(404).send({ error: "Client introuvable" })
 
-    const prefix = `DEV-${new Date(body.dateEmission).getFullYear()}-`
-    const count = await prisma.devis.count({ where: { client: { cabinetId: user.cabinetId } } })
-    const numero = body.numero?.trim() || `${prefix}${String(count + 1).padStart(4, "0")}`
+    const numero = body.numero?.trim() || await nextNumeroDevis(user.cabinetId, new Date(body.dateEmission).getFullYear())
     const tvaTaux = body.tvaTaux ?? Number(client.tauxTVA.toString() || "18")
     const sousTotalHt = body.lignes.reduce((s, l) => s + Math.round(l.quantite * l.prixUnitaireHt), 0)
     const montantTva = Math.round((sousTotalHt * tvaTaux) / 100)
@@ -154,9 +188,7 @@ export async function facturationRoutes(app: FastifyInstance) {
       return reply.status(409).send({ error: "Seuls les devis acceptés peuvent être convertis." })
     }
 
-    const prefix = `${new Date().getFullYear()}-`
-    const count = await prisma.facture.count({ where: { client: { cabinetId: user.cabinetId } } })
-    const numeroFacture = `${prefix}${String(count + 1).padStart(4, "0")}`
+    const numeroFacture = await nextNumeroFacture(user.cabinetId, new Date().getFullYear())
 
     const facture = await prisma.$transaction(async tx => {
       const f = await tx.facture.create({
@@ -310,15 +342,15 @@ export async function facturationRoutes(app: FastifyInstance) {
     const user = request.user as { cabinetId: string }
     const q = request.query as { clientId?: string; statut?: string; du?: string; au?: string; search?: string }
     const now = new Date()
-    const filtreStatut =
+    const filtreStatut: Prisma.FactureWhereInput =
       q.statut === "EN_RETARD"
         ? {
-            statut: { in: ["EMISE", "PARTIELLEMENT_PAYEE", "EN_RETARD"] as const },
+            statut: { in: [StatutFacture.EMISE, StatutFacture.PARTIELLEMENT_PAYEE, StatutFacture.EN_RETARD] },
             dateEcheance: { lt: now },
             resteAPayer: { gt: 0 },
           }
         : q.statut && q.statut !== "TOUS"
-          ? { statut: q.statut as any }
+          ? { statut: q.statut as StatutFacture }
           : {}
 
     const factures = await prisma.facture.findMany({
@@ -403,9 +435,7 @@ export async function facturationRoutes(app: FastifyInstance) {
     const client = await prisma.client.findFirst({ where: { id: body.clientId, cabinetId: user.cabinetId } })
     if (!client) return reply.status(404).send({ error: "Client introuvable" })
 
-    const prefix = `${new Date(body.dateEmission).getFullYear()}-`
-    const count = await prisma.facture.count({ where: { client: { cabinetId: user.cabinetId } } })
-    const numero = body.numero?.trim() || `${prefix}${String(count + 1).padStart(4, "0")}`
+    const numero = body.numero?.trim() || await nextNumeroFacture(user.cabinetId, new Date(body.dateEmission).getFullYear())
     const tvaTaux = body.tvaTaux ?? Number(client.tauxTVA.toString() || "18")
     const sousTotalHt = body.lignes.reduce((s, l) => s + Math.round(l.quantite * l.prixUnitaireHt), 0)
     const montantTva = Math.round((sousTotalHt * tvaTaux) / 100)
@@ -488,6 +518,52 @@ export async function facturationRoutes(app: FastifyInstance) {
     })
 
     return reply.status(201).send({ paiement: { ...paiement, montant: paiement.montant.toString() } })
+  })
+
+  app.post("/:id/avoir", async (request, reply) => {
+    const user = request.user as { id: string; cabinetId: string }
+    const { id } = request.params as { id: string }
+    const facture = await prisma.facture.findFirst({
+      where: { id, client: { cabinetId: user.cabinetId } },
+      include: { lignes: true },
+    })
+    if (!facture) return reply.status(404).send({ error: "Facture introuvable" })
+    if (facture.numero.startsWith("AV-")) return reply.status(409).send({ error: "Impossible de créer un avoir depuis un avoir." })
+
+    const annee = new Date().getFullYear()
+    const numeroAvoir = await nextNumeroAvoir(user.cabinetId, annee)
+    const sousTotalHt = -Math.abs(Number(facture.sousTotalHt.toString()))
+    const montantTva = -Math.abs(Number(facture.montantTva.toString()))
+    const totalTtc = -Math.abs(Number(facture.totalTtc.toString()))
+
+    const avoir = await prisma.facture.create({
+      data: {
+        clientId: facture.clientId,
+        creeParId: user.id,
+        numero: numeroAvoir,
+        dateEmission: new Date(),
+        dateEcheance: new Date(),
+        statut: "PAYEE",
+        tvaTaux: Number(facture.tvaTaux.toString()),
+        sousTotalHt,
+        montantTva,
+        totalTtc,
+        montantPaye: -totalTtc,
+        resteAPayer: 0,
+        notes: `Avoir généré depuis facture ${facture.numero}${facture.notes ? ` — ${facture.notes}` : ""}`,
+        lignes: {
+          create: facture.lignes.map((l, i) => ({
+            description: `AVOIR - ${l.description}`,
+            quantite: Number(l.quantite.toString()),
+            prixUnitaireHt: -Math.abs(Number(l.prixUnitaireHt.toString())),
+            totalLigneHt: -Math.abs(Number(l.totalLigneHt.toString())),
+            ordre: i,
+          })),
+        },
+      },
+      include: { client: { select: { id: true, nomRaisonSociale: true } }, lignes: true },
+    })
+    return reply.status(201).send({ avoir })
   })
 
   app.get("/:id/pdf", async (request, reply) => {

@@ -88,6 +88,10 @@ function validerEcriture(data: z.infer<typeof EcritureSchema>): ValidationResult
   }
 }
 
+function monthlyPeriodKey(exerciceId: string, dateOperation: Date) {
+  return `${exerciceId}:${dateOperation.getUTCFullYear()}-${String(dateOperation.getUTCMonth() + 1).padStart(2, "0")}`
+}
+
 // ── Routes ────────────────────────────────────────────────────
 
 export async function ecritureRoutes(app: FastifyInstance) {
@@ -109,6 +113,8 @@ export async function ecritureRoutes(app: FastifyInstance) {
     }
 
     const data = parsed.data
+    const dateOp = new Date(data.dateOperation)
+    const periodKey = monthlyPeriodKey(data.exerciceId, dateOp)
 
     // Vérification des règles métier
     const validation = validerEcriture(data)
@@ -134,6 +140,18 @@ export async function ecritureRoutes(app: FastifyInstance) {
     if (exercice.cloture) {
       return reply.status(409).send({ error: "L'exercice est clôturé — rouverture nécessaire" })
     }
+    const lockMensuel = await prisma.auditLog.findFirst({
+      where: {
+        cabinetId: user.cabinetId,
+        action: "CLOTURE_MENSUELLE_VALIDEE",
+        entite: "cloture_mensuelle",
+        entiteId: periodKey,
+      },
+      select: { id: true },
+    })
+    if (lockMensuel) {
+      return reply.status(409).send({ error: "La période mensuelle est clôturée et verrouillée pour cette date." })
+    }
 
     const journal = exercice.journaux.find(j => j.code === data.journalCode)
     if (!journal) {
@@ -150,7 +168,7 @@ export async function ecritureRoutes(app: FastifyInstance) {
           exerciceId:    data.exerciceId,
           journalId:     journal.id,
           saisiParId:    user.id,
-          dateOperation: new Date(data.dateOperation),
+          dateOperation: dateOp,
           libelle:       data.libelle,
           pieceRef:      data.pieceRef,
           statut:        "VALIDEE",

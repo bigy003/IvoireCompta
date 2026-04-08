@@ -5,10 +5,13 @@ import { useRouter } from "next/navigation"
 import Cookies from "js-cookie"
 import Layout from "@/components/layout"
 import {
+  approuverClotureMensuelle,
   api,
   deverrouillerClotureMensuelle,
   getClients,
   getClotureMensuelle,
+  rejeterClotureMensuelle,
+  soumettreClotureMensuelle,
   validerClotureMensuelle,
 } from "@/lib/api"
 
@@ -41,6 +44,13 @@ const MOIS = [
   "Décembre",
 ]
 
+function workflowLabel(statut: "NON_SOUMISE" | "SOUMISE" | "APPROUVEE" | "REJETEE") {
+  if (statut === "APPROUVEE") return "Revue approuvée"
+  if (statut === "SOUMISE") return "En attente d'approbation"
+  if (statut === "REJETEE") return "Revue rejetée"
+  return "Revue non soumise"
+}
+
 export default function ClotureMensuellePage() {
   const router = useRouter()
   const [authLoading, setAuthLoading] = useState(true)
@@ -48,6 +58,7 @@ export default function ClotureMensuellePage() {
   const [ok, setOk] = useState("")
   const [err, setErr] = useState("")
   const [canUnlock, setCanUnlock] = useState(false)
+  const [canApprove, setCanApprove] = useState(false)
 
   const [clients, setClients] = useState<Client[]>([])
   const [exercices, setExercices] = useState<Exercice[]>([])
@@ -67,7 +78,12 @@ export default function ClotureMensuellePage() {
   const [checklist, setChecklist] = useState<Check[]>([])
   const [anomalies, setAnomalies] = useState<Anomalie[]>([])
   const [verrouille, setVerrouille] = useState(false)
-  const [historique, setHistorique] = useState<Array<{ action: string; createdAt: string }>>([])
+  const [historique, setHistorique] = useState<Array<{ action: string; createdAt: string; userNom: string; userEmail?: string | null }>>([])
+  const [workflow, setWorkflow] = useState<{ statut: "NON_SOUMISE" | "SOUMISE" | "APPROUVEE" | "REJETEE"; derniereActionAt: string | null; commentaire: string | null }>({
+    statut: "NON_SOUMISE",
+    derniereActionAt: null,
+    commentaire: null,
+  })
 
   const tousConformes = useMemo(() => checklist.length > 0 && checklist.every(c => c.ok), [checklist])
 
@@ -101,7 +117,8 @@ export default function ClotureMensuellePage() {
       setChecklist((r.data.checklist ?? []) as Check[])
       setAnomalies((r.data.anomalies ?? []) as Anomalie[])
       setVerrouille(Boolean(r.data.verrouille))
-      setHistorique((r.data.historique ?? []) as Array<{ action: string; createdAt: string }>)
+      setWorkflow((r.data.workflow ?? workflow) as { statut: "NON_SOUMISE" | "SOUMISE" | "APPROUVEE" | "REJETEE"; derniereActionAt: string | null; commentaire: string | null })
+      setHistorique((r.data.historique ?? []) as Array<{ action: string; createdAt: string; userNom: string; userEmail?: string | null }>)
       setOk("Clôture mensuelle actualisée.")
     } catch {
       setErr("Impossible de charger la clôture mensuelle.")
@@ -119,6 +136,7 @@ export default function ClotureMensuellePage() {
       const u = Cookies.get("user")
       const role = u ? (JSON.parse(u) as { role?: string }).role : ""
       setCanUnlock(role === "EXPERT_COMPTABLE" || role === "ADMIN_CABINET")
+      setCanApprove(role === "EXPERT_COMPTABLE" || role === "ADMIN_CABINET")
     } catch {
       setCanUnlock(false)
     }
@@ -179,8 +197,63 @@ export default function ClotureMensuellePage() {
 
             <div className="flex flex-wrap gap-2">
               <button
+                className="px-4 py-2 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
+                disabled={!exerciceId || verrouille || workflow.statut === "SOUMISE" || workflow.statut === "APPROUVEE"}
+                onClick={async () => {
+                  try {
+                    setErr("")
+                    await soumettreClotureMensuelle({ exerciceId, mois, annee, commentaire: commentaire.trim() || undefined })
+                    setOk("Période soumise pour revue.")
+                    await actualiser()
+                  } catch (e: unknown) {
+                    const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                    setErr(msg || "Échec de la soumission.")
+                  }
+                }}
+              >
+                Soumettre pour approbation
+              </button>
+              {canApprove && !verrouille && (
+                <>
+                  <button
+                    className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-60"
+                    disabled={!exerciceId || workflow.statut !== "SOUMISE"}
+                    onClick={async () => {
+                      try {
+                        setErr("")
+                        await approuverClotureMensuelle({ exerciceId, mois, annee, commentaire: commentaire.trim() || undefined })
+                        setOk("Période approuvée.")
+                        await actualiser()
+                      } catch (e: unknown) {
+                        const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                        setErr(msg || "Échec de l'approbation.")
+                      }
+                    }}
+                  >
+                    Approuver
+                  </button>
+                  <button
+                    className="px-4 py-2 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm font-semibold hover:bg-red-100 disabled:opacity-60"
+                    disabled={!exerciceId || workflow.statut !== "SOUMISE"}
+                    onClick={async () => {
+                      try {
+                        setErr("")
+                        await rejeterClotureMensuelle({ exerciceId, mois, annee, commentaire: commentaire.trim() || undefined })
+                        setOk("Période rejetée.")
+                        await actualiser()
+                      } catch (e: unknown) {
+                        const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+                        setErr(msg || "Échec du rejet.")
+                      }
+                    }}
+                  >
+                    Rejeter
+                  </button>
+                </>
+              )}
+              <button
                 className="px-4 py-2 rounded-xl bg-orange-500 text-white text-sm font-semibold hover:bg-orange-600 disabled:opacity-60"
-                disabled={!exerciceId || verrouille || !tousConformes || !confirmation || commentaire.trim().length < 3}
+                disabled={!exerciceId || verrouille || !tousConformes || !confirmation || commentaire.trim().length < 3 || workflow.statut !== "APPROUVEE"}
                 onClick={async () => {
                   try {
                     setErr("")
@@ -215,6 +288,17 @@ export default function ClotureMensuellePage() {
               )}
               <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${verrouille ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-700"}`}>
                 {verrouille ? "Clôturée" : "Ouverte"}
+              </span>
+              <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+                workflow.statut === "APPROUVEE"
+                  ? "bg-emerald-100 text-emerald-700"
+                  : workflow.statut === "SOUMISE"
+                    ? "bg-amber-100 text-amber-700"
+                    : workflow.statut === "REJETEE"
+                      ? "bg-red-100 text-red-700"
+                      : "bg-gray-100 text-gray-700"
+              }`}>
+                {workflowLabel(workflow.statut)}
               </span>
             </div>
           </div>
@@ -289,8 +373,19 @@ export default function ClotureMensuellePage() {
               <div className="space-y-2 text-sm">
                 {historique.map((h, i) => (
                   <div key={`${h.action}-${i}`} className="rounded-lg border border-gray-100 px-3 py-2">
-                    <p className="font-semibold text-gray-800">{h.action === "CLOTURE_MENSUELLE_VALIDEE" ? "Clôturé" : "Déverrouillé"}</p>
+                    <p className="font-semibold text-gray-800">
+                      {h.action === "CLOTURE_MENSUELLE_VALIDEE"
+                        ? "Clôturé"
+                        : h.action === "CLOTURE_MENSUELLE_DEVERROUILLEE"
+                          ? "Déverrouillé"
+                          : h.action === "CLOTURE_MENSUELLE_SOUMISE"
+                            ? "Soumis pour approbation"
+                            : h.action === "CLOTURE_MENSUELLE_APPROUVEE"
+                              ? "Approuvé"
+                              : "Rejeté"}
+                    </p>
                     <p className="text-gray-500">{new Date(h.createdAt).toLocaleString("fr-FR")}</p>
+                    <p className="text-xs text-gray-500">Par: {h.userNom}{h.userEmail ? ` (${h.userEmail})` : ""}</p>
                   </div>
                 ))}
                 {historique.length === 0 && <p className="text-gray-500">Aucun historique.</p>}
